@@ -4,7 +4,54 @@ import {
   ExtractedFileItem,
   ExtractedFolderNode,
   ExtractionStats,
+  ExtractionResult,
+  SWCourseItem,
 } from '../types';
+
+export const SW_API_COURSES = 'https://backend.multistreaming.site/api/courses';
+export const SW_API_COURSE_CLASSES = (courseId: string) =>
+  `https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`;
+
+export async function fetchSWCourses(): Promise<SWCourseItem[]> {
+  try {
+    // Try backend proxy first
+    const proxyRes = await fetch('/api/sw/courses');
+    if (proxyRes.ok) {
+      const json = await proxyRes.json();
+      if (Array.isArray(json.data)) return json.data;
+      if (Array.isArray(json)) return json;
+    }
+  } catch {
+    // Fall back to direct request
+  }
+
+  const res = await fetch(SW_API_COURSES);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch SW courses: HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  return json.data || [];
+}
+
+export async function fetchSWCourseClasses(courseId: string): Promise<any> {
+  try {
+    // Try backend proxy first
+    const proxyRes = await fetch(`/api/sw/courses/${encodeURIComponent(courseId)}/classes`);
+    if (proxyRes.ok) {
+      const json = await proxyRes.json();
+      return json.data || json;
+    }
+  } catch {
+    // Fall back to direct request
+  }
+
+  const res = await fetch(SW_API_COURSE_CLASSES(courseId));
+  if (!res.ok) {
+    throw new Error(`Failed to fetch SW classes: HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  return json.data || json;
+}
 
 export async function fetchBatches(): Promise<BatchSection[]> {
   const res = await fetch('/api/batches');
@@ -426,3 +473,195 @@ export function generateTxtFiles(
     m3uPlaylist: m3u,
   };
 }
+
+export function convertSWClassesToExtractionResult(
+  courseId: string,
+  swData: any
+): ExtractionResult {
+  const courseInfo = swData.course || {};
+  const courseTitle = courseInfo.title || `SW Course #${courseId}`;
+  const topics: any[] = swData.classes || [];
+
+  const courseDetails: CourseDetails = {
+    course_id: String(courseId),
+    title: courseTitle,
+    description: Array.isArray(courseInfo.description)
+      ? courseInfo.description.join(' • ')
+      : courseInfo.description || '',
+    thumbnail: courseInfo.bannerSquare || courseInfo.banner || '',
+    banner_image: courseInfo.banner || '',
+    image: courseInfo.banner || '',
+    price: courseInfo.price ? String(courseInfo.price) : undefined,
+    offer_price: courseInfo.discountPrice ? String(courseInfo.discountPrice) : undefined,
+  };
+
+  let totalFilesCount = 0;
+  let totalVideosCount = 0;
+  let totalNotesCount = 0;
+  let totalDppsCount = 0;
+  let totalTestsCount = 0;
+  let totalLinksCount = 0;
+  let totalDurationSeconds = 0;
+
+  const allFiles: ExtractedFileItem[] = [];
+  const rootFolders: ExtractedFolderNode[] = [];
+
+  topics.forEach((topic: any, topicIndex: number) => {
+    const topicName = (topic.topicName || `Topic ${topicIndex + 1}`).trim();
+    const topicId = topic.topicId || `topic_${topicIndex + 1}`;
+    const topicFiles: ExtractedFileItem[] = [];
+
+    const classesList: any[] = topic.classes || [];
+    classesList.forEach((cls: any, classIndex: number) => {
+      const classId = cls._id || cls.classId || `cls_${topicIndex}_${classIndex}`;
+      const classTitle = (cls.title || `Class ${classIndex + 1}`).trim();
+      const teacher = cls.teacherName ? ` (${cls.teacherName})` : '';
+      const fullVideoTitle = `${classTitle}${teacher}`;
+
+      const rawDuration =
+        typeof cls.duration === 'number' ? cls.duration : parseFloat(cls.duration || '0');
+      const durationSeconds = !isNaN(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : 0;
+      totalDurationSeconds += durationSeconds;
+
+      const streamUrl = cls.class_link || '';
+      const downloadUrls: any[] = Array.isArray(cls.mp4Recordings)
+        ? cls.mp4Recordings
+            .filter((r: any) => r && r.url)
+            .map((r: any) => ({
+              quality: r.quality || r.title || 'Standard',
+              url: r.url,
+            }))
+        : [];
+
+      // 1. Video file item
+      if (streamUrl || cls.isLive !== undefined || cls.isRecorded !== undefined) {
+        totalFilesCount++;
+        totalVideosCount++;
+        const videoItem: ExtractedFileItem = {
+          id: String(classId),
+          title: fullVideoTitle,
+          className: classTitle,
+          type: 'video',
+          rawFileType: 2,
+          duration: formatDuration(durationSeconds),
+          durationSeconds,
+          streamUrl,
+          downloadUrls,
+          path: topicName,
+        };
+        topicFiles.push(videoItem);
+        allFiles.push(videoItem);
+      }
+
+      // 2. Class PDFs (Notes / DPPs)
+      if (Array.isArray(cls.classPdf)) {
+        cls.classPdf.forEach((pdf: any, pIdx: number) => {
+          if (!pdf || !pdf.url) return;
+          totalFilesCount++;
+          const pdfName = (pdf.name || `${classTitle} PDF ${pIdx + 1}`).trim();
+          const isDpp =
+            pdfName.toLowerCase().includes('dpp') ||
+            pdfName.toLowerCase().includes('sheet') ||
+            pdfName.toLowerCase().includes('worksheet') ||
+            pdfName.toLowerCase().includes('assignment');
+
+          if (isDpp) totalDppsCount++;
+          else totalNotesCount++;
+
+          const pdfItem: ExtractedFileItem = {
+            id: `${classId}_pdf_${pIdx}`,
+            title: pdfName,
+            className: classTitle,
+            type: isDpp ? 'dpp' : 'notes',
+            rawFileType: 1,
+            pdfUrl: pdf.url,
+            streamUrl: pdf.url,
+            path: topicName,
+          };
+          topicFiles.push(pdfItem);
+          allFiles.push(pdfItem);
+        });
+      }
+
+      // 3. Class Tests
+      if (Array.isArray(cls.classTest)) {
+        cls.classTest.forEach((test: any, tIdx: number) => {
+          if (!test) return;
+          const testUrl = test.url || test.link || '';
+          if (!testUrl && !test.name) return;
+          totalFilesCount++;
+          totalTestsCount++;
+          const testName = (test.name || `${classTitle} Test ${tIdx + 1}`).trim();
+
+          const testItem: ExtractedFileItem = {
+            id: `${classId}_test_${tIdx}`,
+            title: testName,
+            className: classTitle,
+            type: 'test',
+            pdfUrl: testUrl,
+            streamUrl: testUrl,
+            path: topicName,
+          };
+          topicFiles.push(testItem);
+          allFiles.push(testItem);
+        });
+      }
+    });
+
+    rootFolders.push({
+      id: String(topicId),
+      title: topicName,
+      path: [],
+      folders: [],
+      files: topicFiles,
+    });
+  });
+
+  const stats: ExtractionStats = {
+    totalFolders: rootFolders.length,
+    totalFiles: totalFilesCount,
+    totalVideos: totalVideosCount,
+    totalNotes: totalNotesCount,
+    totalDpps: totalDppsCount,
+    totalTests: totalTestsCount,
+    totalLinks: totalLinksCount,
+    totalDurationFormatted: formatDuration(totalDurationSeconds),
+    totalDurationSeconds,
+  };
+
+  const { txtReport, directLinksTxt, botFormatTxt, rawUrlsTxt, m3uPlaylist } = generateTxtFiles(
+    courseId,
+    courseDetails,
+    rootFolders,
+    allFiles,
+    stats
+  );
+
+  return {
+    platform: 'SW',
+    courseId,
+    courseDetails,
+    extractedAt: new Date().toISOString(),
+    stats,
+    rootFolders,
+    allFiles,
+    txtReport,
+    directLinksTxt,
+    botFormatTxt,
+    rawUrlsTxt,
+    m3uPlaylist,
+  };
+}
+
+export async function extractSWBatch(
+  courseId: string,
+  onProgress?: (msg: string, percent: number) => void
+): Promise<ExtractionResult> {
+  onProgress?.(`Connecting to SW API for Course #${courseId}...`, 15);
+  const data = await fetchSWCourseClasses(courseId);
+  onProgress?.('Processing topics, classes, stream links & PDFs...', 65);
+  const result = convertSWClassesToExtractionResult(courseId, data);
+  onProgress?.('Extraction completed successfully!', 100);
+  return result;
+}
+

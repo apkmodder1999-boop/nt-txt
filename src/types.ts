@@ -1,3 +1,21 @@
+export type PlatformType = 'NT' | 'SW';
+
+export interface SWCourseItem {
+  id: string;
+  _id?: string;
+  title: string;
+  price?: number;
+  discountPrice?: number;
+  banner?: string;
+  bannerSquare?: string;
+  validity?: string;
+  liveClassesCount?: number;
+  recordedClassesCount?: number;
+  status?: string;
+  mainCategory?: string;
+  category?: string;
+}
+
 export interface BatchItem {
   id: number | string;
   name: string;
@@ -86,6 +104,7 @@ export interface ExtractionStats {
 }
 
 export interface ExtractionResult {
+  platform?: PlatformType;
   courseId: string;
   courseDetails: CourseDetails | null;
   extractedAt: string;

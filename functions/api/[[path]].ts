@@ -267,6 +267,45 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
     }
   }
 
+  // SW (Selection Way) Endpoints
+  if (pathname === '/api/sw/courses' && request.method === 'GET') {
+    try {
+      const res = await fetch('https://backend.multistreaming.site/api/courses', {
+        headers: DEFAULT_HEADERS,
+      });
+      const data = await res.json();
+      return new Response(JSON.stringify(data), {
+        status: res.status,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message || 'Failed to fetch SW courses' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    }
+  }
+
+  if (pathname.startsWith('/api/sw/courses/') && pathname.endsWith('/classes') && request.method === 'GET') {
+    try {
+      const parts = pathname.split('/');
+      const courseId = parts[parts.length - 2];
+      const res = await fetch(`https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`, {
+        headers: DEFAULT_HEADERS,
+      });
+      const data = await res.json();
+      return new Response(JSON.stringify(data), {
+        status: res.status,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message || 'Failed to fetch SW course classes' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    }
+  }
+
   // 6. GET /api/extract/stream (Edge Server-Sent Events via ReadableStream)
   if (pathname === '/api/extract/stream' && request.method === 'GET') {
     const courseId = url.searchParams.get('courseId')?.trim();

@@ -132,6 +132,49 @@ app.post('/api/video-details', async (req: Request, res: Response) => {
   }
 });
 
+// SW (Selection Way) API Endpoints
+app.get('/api/sw/courses', async (req: Request, res: Response) => {
+  try {
+    const response = await fetch('https://backend.multistreaming.site/api/courses', {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+      },
+    });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `SW API error: ${response.statusText}` });
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (error: any) {
+    console.error('Error fetching SW courses:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch SW courses' });
+  }
+});
+
+app.get('/api/sw/courses/:courseId/classes', async (req: Request, res: Response) => {
+  try {
+    const { courseId } = req.params;
+    const response = await fetch(
+      `https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`,
+      {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': DEFAULT_HEADERS['User-Agent'],
+        },
+      }
+    );
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `SW API error: ${response.statusText}` });
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (error: any) {
+    console.error('Error fetching SW classes:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch SW course classes' });
+  }
+});
+
 function formatDuration(seconds: number | string | null | undefined): string {
   if (!seconds) return 'N/A';
   const num = typeof seconds === 'string' ? parseInt(seconds, 10) : seconds;
@@ -219,6 +262,7 @@ function classifyFile(itemTitle: string, folderPath: string, fileData: any): 'vi
 // 6. Deep Batch Extraction with SSE Stream
 app.get('/api/extract/stream', async (req: Request, res: Response) => {
   const courseId = String(req.query.courseId || '').trim();
+  const platform = String(req.query.platform || 'NT').trim().toUpperCase();
   const deepFileDetails = req.query.deepDetails !== 'false';
 
   if (!courseId) {
@@ -235,10 +279,177 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
   };
 
   try {
-    sendEvent('status', { message: `Connecting to batch API for Course ID #${courseId}...` });
-
-    // Step 1: Course Details
     let courseDetails: any = null;
+    let totalFoldersCount = 0;
+    let totalFilesCount = 0;
+    let totalVideosCount = 0;
+    let totalNotesCount = 0;
+    let totalDppsCount = 0;
+    let totalTestsCount = 0;
+    let totalLinksCount = 0;
+    let totalDurationSeconds = 0;
+
+    const allFilesList: any[] = [];
+    const treeNodes: any[] = [];
+
+    if (platform === 'SW') {
+      sendEvent('status', { message: `Connecting to SW API for Course ID #${courseId}...` });
+      const swRes = await fetch(
+        `https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+          },
+        }
+      );
+
+      if (!swRes.ok) {
+        throw new Error(`Failed to fetch SW course classes: HTTP ${swRes.status}`);
+      }
+
+      const swJson = await swRes.json();
+      const swData = swJson.data || swJson;
+      const courseInfo = swData.course || {};
+      const courseTitle = courseInfo.title || `SW Course #${courseId}`;
+      const topics: any[] = swData.classes || [];
+
+      courseDetails = {
+        course_id: String(courseId),
+        title: courseTitle,
+        description: Array.isArray(courseInfo.description)
+          ? courseInfo.description.join(' • ')
+          : courseInfo.description || '',
+        thumbnail: courseInfo.bannerSquare || courseInfo.banner || '',
+        banner_image: courseInfo.banner || '',
+        image: courseInfo.banner || '',
+        price: courseInfo.price ? String(courseInfo.price) : undefined,
+        offer_price: courseInfo.discountPrice ? String(courseInfo.discountPrice) : undefined,
+      };
+
+      sendEvent('status', {
+        message: `Course loaded: ${courseTitle}`,
+        courseDetails,
+      });
+
+      topics.forEach((topic: any, topicIndex: number) => {
+        totalFoldersCount++;
+        const topicName = (topic.topicName || `Topic ${topicIndex + 1}`).trim();
+        const topicId = topic.topicId || `topic_${topicIndex + 1}`;
+        const topicFiles: any[] = [];
+
+        sendEvent('progress', {
+          folder: topicName,
+          totalFolders: totalFoldersCount,
+          totalFiles: totalFilesCount,
+        });
+
+        const classesList: any[] = topic.classes || [];
+        classesList.forEach((cls: any, classIndex: number) => {
+          const classId = cls._id || cls.classId || `cls_${topicIndex}_${classIndex}`;
+          const classTitle = (cls.title || `Class ${classIndex + 1}`).trim();
+          const teacher = cls.teacherName ? ` (${cls.teacherName})` : '';
+          const fullVideoTitle = `${classTitle}${teacher}`;
+
+          const rawDuration =
+            typeof cls.duration === 'number' ? cls.duration : parseFloat(cls.duration || '0');
+          const durationSeconds = !isNaN(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : 0;
+          totalDurationSeconds += durationSeconds;
+
+          const streamUrl = cls.class_link || '';
+          const downloadUrls = Array.isArray(cls.mp4Recordings)
+            ? cls.mp4Recordings
+                .filter((r: any) => r && r.url)
+                .map((r: any) => ({
+                  quality: r.quality || r.title || 'Standard',
+                  url: r.url,
+                }))
+            : [];
+
+          if (streamUrl || cls.isLive !== undefined || cls.isRecorded !== undefined) {
+            totalFilesCount++;
+            totalVideosCount++;
+            const videoItem = {
+              id: String(classId),
+              title: fullVideoTitle,
+              className: classTitle,
+              type: 'video',
+              rawFileType: 2,
+              duration: formatDuration(durationSeconds),
+              durationSeconds,
+              streamUrl,
+              downloadUrls,
+              path: topicName,
+            };
+            topicFiles.push(videoItem);
+            allFilesList.push(videoItem);
+          }
+
+          if (Array.isArray(cls.classPdf)) {
+            cls.classPdf.forEach((pdf: any, pIdx: number) => {
+              if (!pdf || !pdf.url) return;
+              totalFilesCount++;
+              const pdfName = (pdf.name || `${classTitle} PDF ${pIdx + 1}`).trim();
+              const isDpp =
+                pdfName.toLowerCase().includes('dpp') ||
+                pdfName.toLowerCase().includes('sheet') ||
+                pdfName.toLowerCase().includes('worksheet') ||
+                pdfName.toLowerCase().includes('assignment');
+
+              if (isDpp) totalDppsCount++;
+              else totalNotesCount++;
+
+              const pdfItem = {
+                id: `${classId}_pdf_${pIdx}`,
+                title: pdfName,
+                className: classTitle,
+                type: isDpp ? 'dpp' : 'notes',
+                rawFileType: 1,
+                pdfUrl: pdf.url,
+                streamUrl: pdf.url,
+                path: topicName,
+              };
+              topicFiles.push(pdfItem);
+              allFilesList.push(pdfItem);
+            });
+          }
+
+          if (Array.isArray(cls.classTest)) {
+            cls.classTest.forEach((test: any, tIdx: number) => {
+              if (!test) return;
+              const testUrl = test.url || test.link || '';
+              if (!testUrl && !test.name) return;
+              totalFilesCount++;
+              totalTestsCount++;
+              const testName = (test.name || `${classTitle} Test ${tIdx + 1}`).trim();
+
+              const testItem = {
+                id: `${classId}_test_${tIdx}`,
+                title: testName,
+                className: classTitle,
+                type: 'test',
+                pdfUrl: testUrl,
+                streamUrl: testUrl,
+                path: topicName,
+              };
+              topicFiles.push(testItem);
+              allFilesList.push(testItem);
+            });
+          }
+        });
+
+        treeNodes.push({
+          id: String(topicId),
+          title: topicName,
+          path: [],
+          folders: [],
+          files: topicFiles,
+        });
+      });
+    } else {
+      sendEvent('status', { message: `Connecting to batch API for Course ID #${courseId}...` });
+
+      // Step 1: Course Details
     try {
       const cdRes = await fetch(`${SERVICE_BASE_URL}/course-details`, {
         method: 'POST',
@@ -510,6 +721,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
         });
       }
     }
+  }
 
     sendEvent('status', { message: 'Compiling structured TXT reports...' });
 
@@ -792,6 +1004,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
     });
 
     const finalResult = {
+      platform,
       courseId,
       courseDetails,
       extractedAt: dateNow,

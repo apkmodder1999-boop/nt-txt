@@ -146,9 +146,18 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result }) => {
       <div className="p-5 sm:p-6 border-b border-border bg-muted/30">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center space-x-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-1">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>EXTRACTION COMPLETED</span>
+            <div className="flex items-center space-x-2 text-xs font-semibold mb-1">
+              <span className={`px-2 py-0.5 rounded font-mono text-[11px] font-bold ${
+                result.platform === 'SW'
+                  ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                  : 'bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+              }`}>
+                {result.platform || 'NT'}
+              </span>
+              <div className="flex items-center space-x-1.5 text-emerald-600 dark:text-emerald-400">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>EXTRACTION COMPLETED</span>
+              </div>
               <span className="text-muted-foreground">•</span>
               <span className="text-muted-foreground font-mono">Course #{result.courseId}</span>
             </div>

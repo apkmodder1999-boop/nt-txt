@@ -11,6 +11,8 @@ import {
   parseDownloadUrls,
   classifyFile,
   generateTxtFiles,
+  fetchSWCourses,
+  extractSWBatch,
 } from './services/api';
 import {
   BatchSection,
@@ -19,6 +21,8 @@ import {
   ExtractionResult,
   ExtractedFolderNode,
   ExtractedFileItem,
+  PlatformType,
+  SWCourseItem,
 } from './types';
 import {
   Search,
@@ -30,9 +34,13 @@ import {
   SlidersHorizontal,
   X,
   Send,
+  Sparkles,
+  ExternalLink,
+  Layers,
 } from 'lucide-react';
 
 export default function App() {
+  const [platform, setPlatform] = useState<PlatformType>('NT');
   const [courseId, setCourseId] = useState<string>('192');
   const [deepDetails, setDeepDetails] = useState<boolean>(true);
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
@@ -48,10 +56,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Available batches list & filtering
+  // NT Batches list & filtering
   const [batchSections, setBatchSections] = useState<BatchSection[]>([]);
   const [isLoadingBatches, setIsLoadingBatches] = useState<boolean>(false);
   const [batchesError, setBatchesError] = useState<string | null>(null);
+
+  // SW Courses list & filtering
+  const [swCourses, setSwCourses] = useState<SWCourseItem[]>([]);
+  const [isLoadingSWCourses, setIsLoadingSWCourses] = useState<boolean>(false);
+  const [swCoursesError, setSwCoursesError] = useState<string | null>(null);
+
   const [batchSearchTerm, setBatchSearchTerm] = useState<string>('');
   const [selectedSection, setSelectedSection] = useState<string>('all');
 
@@ -99,7 +113,50 @@ export default function App() {
     loadBatches();
   }, []);
 
-  // Flattened batches list
+  // Load SW courses catalog on mount
+  useEffect(() => {
+    async function loadSW() {
+      setIsLoadingSWCourses(true);
+      setSwCoursesError(null);
+      try {
+        const data = await fetchSWCourses();
+        if (Array.isArray(data)) {
+          setSwCourses(data);
+        }
+      } catch (err: any) {
+        console.error('Failed to load SW courses:', err);
+        setSwCoursesError('Could not load SW courses catalog.');
+      } finally {
+        setIsLoadingSWCourses(false);
+      }
+    }
+    loadSW();
+  }, []);
+
+  // Switch Platform handler
+  const handleSwitchPlatform = (newPlatform: PlatformType) => {
+    if (newPlatform === platform) return;
+    setPlatform(newPlatform);
+    setSelectedSection('all');
+    setBatchSearchTerm('');
+    setError(null);
+    setResult(null);
+    if (newPlatform === 'NT') {
+      if (!courseId || courseId.length > 8) {
+        setCourseId('192');
+      }
+    } else {
+      if (!courseId || /^\d{1,4}$/.test(courseId)) {
+        if (swCourses.length > 0) {
+          setCourseId(swCourses[0].id);
+        } else {
+          setCourseId('');
+        }
+      }
+    }
+  };
+
+  // Flattened batches list for NT
   const allBatches = useMemo(() => {
     const list: Array<BatchItem & { sectionName: string }> = [];
     batchSections.forEach((sec) => {
@@ -110,12 +167,12 @@ export default function App() {
     return list;
   }, [batchSections]);
 
-  // Section names for category tabs
+  // Section names for category tabs (NT)
   const sectionNames = useMemo(() => {
     return Array.from(new Set(batchSections.map((s) => s.section).filter(Boolean)));
   }, [batchSections]);
 
-  // Filtered batches
+  // Filtered batches for NT
   const filteredBatches = useMemo(() => {
     return allBatches.filter((b) => {
       const matchesSearch =
@@ -129,6 +186,18 @@ export default function App() {
       return matchesSearch && matchesSection;
     });
   }, [allBatches, batchSearchTerm, selectedSection]);
+
+  // Filtered courses for SW
+  const filteredSWCourses = useMemo(() => {
+    return swCourses.filter((c) => {
+      const q = batchSearchTerm.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        (c.title || '').toLowerCase().includes(q) ||
+        (c.id || '').toLowerCase().includes(q)
+      );
+    });
+  }, [swCourses, batchSearchTerm]);
 
   const addLog = (type: CrawlLog['type'], message: string) => {
     const time = new Date().toLocaleTimeString();
@@ -160,7 +229,7 @@ export default function App() {
   const handleStartExtraction = (idToExtract: string, deep: boolean) => {
     const targetCourseId = idToExtract.trim();
     if (!targetCourseId) {
-      setError('Please enter a valid numeric Course ID.');
+      setError(`Please enter a valid ${platform} Course ID.`);
       return;
     }
 
@@ -178,14 +247,14 @@ export default function App() {
     setLogs([]);
     setIsExtracting(true);
 
-    addLog('info', `Starting extraction for Course ID #${targetCourseId}...`);
+    addLog('info', `Starting extraction on ${platform} for Course ID #${targetCourseId}...`);
 
     // Clean up any ongoing SSE
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
 
-    const sseUrl = `/api/extract/stream?courseId=${encodeURIComponent(
+    const sseUrl = `/api/extract/stream?platform=${platform}&courseId=${encodeURIComponent(
       targetCourseId
     )}&deepDetails=${deep}`;
 
@@ -235,6 +304,7 @@ export default function App() {
       try {
         hasCompleted = true;
         const finalData: ExtractionResult = JSON.parse(e.data);
+        finalData.platform = platform;
         setResult(finalData);
         setProgressPercent(100);
         setIsExtracting(false);
@@ -244,11 +314,11 @@ export default function App() {
         setTotalNotes(finalData.stats?.totalNotes || 0);
         setTotalDpps(finalData.stats?.totalDpps || 0);
 
-        const courseTitle = finalData.courseDetails?.title || `Course_${targetCourseId}`;
+        const courseTitle = finalData.courseDetails?.title || `${platform}_Course_${targetCourseId}`;
         const filename = `${courseTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}.txt`;
 
         setSuccessMessage(
-          `Done — ${courseTitle}: ${finalData.stats?.totalFolders} folders, ${finalData.stats?.totalFiles} items extracted.`
+          `Done [${platform}] — ${courseTitle}: ${finalData.stats?.totalFolders} folders, ${finalData.stats?.totalFiles} items extracted.`
         );
 
         // Auto-download TXT (Bot format)
@@ -279,13 +349,64 @@ export default function App() {
 
     es.addEventListener('error', (e: any) => {
       if (hasCompleted) return;
-      console.warn('SSE stream interrupted, switching to client fallback crawler...', e);
+      console.warn('SSE stream interrupted, switching to fallback crawler...', e);
       es.close();
       eventSourceRef.current = null;
 
-      addLog('warning', 'Direct stream closed. Executing client-side crawler...');
-      runClientSideFallback(targetCourseId, deep);
+      if (platform === 'SW') {
+        addLog('warning', 'Direct stream closed. Executing client-side SW extraction...');
+        runClientSideSWExtraction(targetCourseId);
+      } else {
+        addLog('warning', 'Direct stream closed. Executing client-side NT crawler...');
+        runClientSideFallback(targetCourseId, deep);
+      }
     });
+  };
+
+  // Client-side SW extraction pipeline
+  const runClientSideSWExtraction = async (targetCourseId: string) => {
+    try {
+      addLog('info', `Connecting directly to SW classes API for Course #${targetCourseId}...`);
+      const finalResult = await extractSWBatch(targetCourseId, (msg, pct) => {
+        addLog('info', msg);
+        setProgressPercent(pct);
+      });
+
+      setResult(finalResult);
+      setProgressPercent(100);
+      setIsExtracting(false);
+      setTotalFolders(finalResult.stats?.totalFolders || 0);
+      setTotalFiles(finalResult.stats?.totalFiles || 0);
+      setTotalVideos(finalResult.stats?.totalVideos || 0);
+      setTotalNotes(finalResult.stats?.totalNotes || 0);
+      setTotalDpps(finalResult.stats?.totalDpps || 0);
+
+      const courseTitle = finalResult.courseDetails?.title || `SW_Course_${targetCourseId}`;
+      const filename = `${courseTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}.txt`;
+
+      setSuccessMessage(
+        `Done [SW] — ${courseTitle}: ${finalResult.stats?.totalFolders} folders, ${finalResult.stats?.totalFiles} items extracted.`
+      );
+
+      if (finalResult.botFormatTxt || finalResult.txtReport) {
+        const contentToSave = finalResult.botFormatTxt || finalResult.txtReport || '';
+        const blob = new Blob(['\uFEFF' + contentToSave], {
+          type: 'text/plain;charset=utf-8',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err: any) {
+      console.error('Client SW extract error:', err);
+      setError(`Extraction failed: ${err.message || 'Unknown error'}`);
+      setIsExtracting(false);
+    }
   };
 
   // Client-side fallback if server streaming encounters network interruption
@@ -502,18 +623,28 @@ export default function App() {
   };
 
   return (
-    <main className="min-h-screen bg-background px-5 py-10 text-foreground selection:bg-primary/20 transition-colors">
+    <main className="min-h-screen bg-background px-4 sm:px-6 py-8 sm:py-12 text-foreground selection:bg-primary/20 transition-colors">
       <div className="mx-auto w-full max-w-3xl">
-        {/* Header with Title and Dark Mode Toggle */}
+        {/* Header with NT Platform Branding and Dark Mode Toggle */}
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Batch Extractor</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Give a course ID and get one text file with every folder, lecture, PDF and video link.
-            </p>
+          <div className="flex items-center gap-3.5">
+            <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-black text-xl tracking-wider shadow-sm shrink-0">
+              NT
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">NT Extractor</h1>
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                  NT & SW
+                </span>
+              </div>
+              <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
+                Export complete course folders, video streams, notes & DPPs as clean TXT files.
+              </p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <a
               id="header-tg-btn"
               href="https://t.me/learn_topper"
@@ -522,7 +653,7 @@ export default function App() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-colors cursor-pointer"
             >
               <Send className="h-3.5 w-3.5" />
-              <span>Join Channel</span>
+              <span className="hidden sm:inline">Join</span> Channel
             </a>
 
             <button
@@ -536,24 +667,65 @@ export default function App() {
           </div>
         </div>
 
-        {/* Input Card matching nt-extractor.lovable.app */}
+        {/* Platform Selection Segmented Control */}
+        <div className="mt-6 p-1 bg-muted/70 dark:bg-muted/40 border border-border rounded-xl flex gap-1">
+          <button
+            type="button"
+            onClick={() => handleSwitchPlatform('NT')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+              platform === 'NT'
+                ? 'bg-card text-foreground shadow-xs border border-border'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <span className="h-2 w-2 rounded-full bg-blue-500" />
+            <span>NT Platform</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono">
+              NextToppers
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSwitchPlatform('SW')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+              platform === 'SW'
+                ? 'bg-card text-foreground shadow-xs border border-border'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <span className="h-2 w-2 rounded-full bg-amber-500" />
+            <span>SW Platform</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-mono">
+              Selection Way
+            </span>
+          </button>
+        </div>
+
+        {/* Input Card */}
         <form
           onSubmit={handleFormSubmit}
-          className="mt-6 flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row shadow-xs"
+          className="mt-4 flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row shadow-xs"
         >
-          <input
-            ref={inputRef}
-            inputMode="numeric"
-            placeholder="e.g. 192"
-            value={courseId}
-            onChange={(e) => setCourseId(e.target.value)}
-            disabled={isExtracting}
-            className="flex-1 rounded-lg border border-input bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-          />
+          <div className="flex-1 relative">
+            <input
+              ref={inputRef}
+              inputMode={platform === 'NT' ? 'numeric' : 'text'}
+              placeholder={
+                platform === 'NT'
+                  ? 'Enter NT Course ID (e.g. 192)'
+                  : 'Enter SW Course ID (e.g. 6a9c1a854d63c7a67104bba6)'
+              }
+              value={courseId}
+              onChange={(e) => setCourseId(e.target.value)}
+              disabled={isExtracting}
+              className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            />
+          </div>
           <button
             type="submit"
             disabled={isExtracting || !courseId.trim()}
-            className="rounded-lg bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer"
+            className="rounded-lg bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer shrink-0"
           >
             {isExtracting ? (
               <span className="flex items-center justify-center gap-2">
@@ -561,13 +733,13 @@ export default function App() {
                 Extracting…
               </span>
             ) : (
-              'Extract TXT'
+              `Extract ${platform} TXT`
             )}
           </button>
         </form>
 
         {/* Optional stream crawl toggle */}
-        <div className="mt-2.5 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+        <div className="mt-2.5 flex items-center justify-between px-1 text-xs text-muted-foreground">
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -575,8 +747,11 @@ export default function App() {
               onChange={(e) => setDeepDetails(e.target.checked)}
               className="rounded border-input text-primary focus:ring-0"
             />
-            <span>Include direct video stream URLs & PDF download links</span>
+            <span>Include direct stream URLs & PDF download links</span>
           </label>
+          <span className="font-mono text-[11px]">
+            Target: <strong className="text-foreground">{platform}</strong>
+          </span>
         </div>
 
         {/* Progress Card when extracting */}
@@ -586,7 +761,7 @@ export default function App() {
               <p className="text-sm font-medium text-foreground truncate">
                 {currentFolder
                   ? `Scanning: ${currentFolder}`
-                  : `Scanning folders… (${totalFolders} found, ${totalFiles} items)`}
+                  : `Connecting to ${platform} API… (${totalFolders} folders, ${totalFiles} items)`}
               </p>
               <p className="text-sm tabular-nums text-muted-foreground font-mono">
                 {progressPercent}%
@@ -647,31 +822,40 @@ export default function App() {
           </div>
         )}
 
-        {/* Available batches section */}
+        {/* Available Batches / Courses Catalog */}
         <div className="mt-10">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-foreground">Available batches</h2>
-            {allBatches.length > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {filteredBatches.length} courses listed
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-foreground">
+                {platform === 'NT' ? 'Available NT Batches' : 'Available SW Courses'}
+              </h2>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-mono font-medium">
+                {platform === 'NT' ? filteredBatches.length : filteredSWCourses.length} available
               </span>
-            )}
+            </div>
+            <span className="text-xs text-muted-foreground">
+              Click &quot;Extract&quot; on any course to download its TXT
+            </span>
           </div>
 
-          {/* Search Batches Bar */}
+          {/* Search Catalog Bar */}
           <div className="mt-3 relative">
             <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={batchSearchTerm}
               onChange={(e) => setBatchSearchTerm(e.target.value)}
-              placeholder="Search batches by name or ID…"
+              placeholder={
+                platform === 'NT'
+                  ? 'Search NT batches by name or ID…'
+                  : 'Search SW courses by title or ID…'
+              }
               className="w-full rounded-lg border border-input bg-card pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
 
-          {/* Section Category Tabs */}
-          {sectionNames.length > 1 && (
+          {/* NT Category Tabs */}
+          {platform === 'NT' && sectionNames.length > 1 && (
             <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-1">
               <button
                 onClick={() => setSelectedSection('all')}
@@ -699,73 +883,159 @@ export default function App() {
             </div>
           )}
 
-          {/* Batches Loading / Error State */}
-          {isLoadingBatches && (
-            <p className="mt-3 text-sm text-muted-foreground">Loading batches…</p>
+          {/* NT Platform Catalog List */}
+          {platform === 'NT' && (
+            <>
+              {isLoadingBatches && (
+                <div className="mt-4 flex items-center justify-center py-8 text-sm text-muted-foreground gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Loading NT batches…</span>
+                </div>
+              )}
+
+              {batchesError && !isLoadingBatches && (
+                <p className="mt-3 text-sm text-destructive">{batchesError}</p>
+              )}
+
+              {!isLoadingBatches && filteredBatches.length > 0 && (
+                <ul className="mt-3 grid gap-2">
+                  {filteredBatches.map((b) => (
+                    <li
+                      key={`${b.id}-${b.sectionName}`}
+                      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border bg-card p-3 sm:flex transition hover:border-border/80"
+                    >
+                      {b.thumbnail ? (
+                        <img
+                          src={b.thumbnail}
+                          alt={b.name}
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          className="h-12 w-20 shrink-0 rounded-md object-cover bg-muted"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="h-12 w-20 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground text-xs font-semibold">
+                          ID {b.id}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-2 text-sm font-medium text-foreground">{b.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          ID {b.id} {b.sectionName && `• ${b.sectionName}`}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCourseId(String(b.id));
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                          handleStartExtraction(String(b.id), deepDetails);
+                        }}
+                        disabled={isExtracting}
+                        className="col-span-2 w-full shrink-0 rounded-lg border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-accent disabled:opacity-50 sm:col-span-1 sm:w-auto cursor-pointer"
+                      >
+                        Extract
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {!isLoadingBatches && filteredBatches.length === 0 && !batchesError && (
+                <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  No NT batches found matching your search.
+                </div>
+              )}
+            </>
           )}
 
-          {batchesError && !isLoadingBatches && (
-            <p className="mt-3 text-sm text-destructive">{batchesError}</p>
-          )}
+          {/* SW Platform Catalog List */}
+          {platform === 'SW' && (
+            <>
+              {isLoadingSWCourses && (
+                <div className="mt-4 flex items-center justify-center py-8 text-sm text-muted-foreground gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Loading SW courses catalog…</span>
+                </div>
+              )}
 
-          {/* Batches List matching nt-extractor.lovable.app */}
-          {!isLoadingBatches && filteredBatches.length > 0 && (
-            <ul className="mt-3 grid gap-2">
-              {filteredBatches.map((b) => (
-                <li
-                  key={`${b.id}-${b.sectionName}`}
-                  className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border bg-card p-3 sm:flex transition hover:border-border/80"
-                >
-                  {b.thumbnail ? (
-                    <img
-                      src={b.thumbnail}
-                      alt={b.name}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      className="h-12 w-20 shrink-0 rounded-md object-cover bg-muted"
-                      onError={(e) => {
-                        // Fallback if image fails to load
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className="h-12 w-20 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground text-xs font-semibold">
-                      ID {b.id}
-                    </div>
-                  )}
+              {swCoursesError && !isLoadingSWCourses && (
+                <p className="mt-3 text-sm text-destructive">{swCoursesError}</p>
+              )}
 
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-sm font-medium text-foreground">{b.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      ID {b.id} {b.sectionName && `• ${b.sectionName}`}
-                    </p>
-                  </div>
+              {!isLoadingSWCourses && filteredSWCourses.length > 0 && (
+                <ul className="mt-3 grid gap-2">
+                  {filteredSWCourses.map((c) => {
+                    const thumb = c.bannerSquare || c.banner;
+                    return (
+                      <li
+                        key={c.id}
+                        className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border bg-card p-3 sm:flex transition hover:border-border/80"
+                      >
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt={c.title}
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            className="h-12 w-20 shrink-0 rounded-md object-cover bg-muted"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="h-12 w-20 shrink-0 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xs font-bold font-mono">
+                            SW
+                          </div>
+                        )}
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCourseId(String(b.id));
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                      handleStartExtraction(String(b.id), deepDetails);
-                    }}
-                    disabled={isExtracting}
-                    className="col-span-2 w-full shrink-0 rounded-lg border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-accent disabled:opacity-50 sm:col-span-1 sm:w-auto cursor-pointer"
-                  >
-                    Extract
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                        <div className="min-w-0 flex-1">
+                          <p className="line-clamp-1 text-sm font-medium text-foreground">{c.title}</p>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                            <span className="font-mono text-[11px] bg-muted px-1.5 py-0.2 rounded">
+                              ID: {c.id.substring(0, 12)}…
+                            </span>
+                            {c.validity && <span>• {c.validity}</span>}
+                            {(c.discountPrice || c.price) && (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                                • ₹{c.discountPrice || c.price}
+                              </span>
+                            )}
+                          </div>
+                        </div>
 
-          {!isLoadingBatches && filteredBatches.length === 0 && !batchesError && (
-            <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              No batches found matching your search.
-            </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCourseId(c.id);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                            handleStartExtraction(c.id, deepDetails);
+                          }}
+                          disabled={isExtracting}
+                          className="col-span-2 w-full shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 sm:col-span-1 sm:w-auto cursor-pointer"
+                        >
+                          Extract SW
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {!isLoadingSWCourses && filteredSWCourses.length === 0 && !swCoursesError && (
+                <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  No SW courses found matching your search.
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* Footer */}
+        {/* Watermark & Community Footer */}
         <footer className="mt-16 text-center text-xs text-muted-foreground pb-8 space-y-2">
           <p>
             Built by{' '}
@@ -787,7 +1057,9 @@ export default function App() {
               t.me/learn_topper
             </a>
           </p>
-          <p className="text-muted-foreground/70">Batch Extractor — Export any course as a TXT file</p>
+          <p className="text-muted-foreground/70">
+            NT Platform — Multi-Platform Course Extractor (NT &amp; SW)
+          </p>
         </footer>
       </div>
 
