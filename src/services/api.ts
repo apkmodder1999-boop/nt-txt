@@ -64,7 +64,12 @@ export async function fetchBatches(): Promise<BatchSection[]> {
   if (!res.ok) {
     throw new Error(`Failed to fetch batches catalog: HTTP ${res.status}`);
   }
-  return res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid response from /api/batches: ${text.slice(0, 80)}`);
+  }
 }
 
 export async function fetchCourseDetails(courseId: string): Promise<CourseDetails> {
@@ -76,7 +81,12 @@ export async function fetchCourseDetails(courseId: string): Promise<CourseDetail
   if (!res.ok) {
     throw new Error(`Failed to fetch course details: HTTP ${res.status}`);
   }
-  return res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid response from /api/course-details: ${text.slice(0, 80)}`);
+  }
 }
 
 export async function fetchBatchContent(courseId: string): Promise<any[]> {
@@ -88,8 +98,13 @@ export async function fetchBatchContent(courseId: string): Promise<any[]> {
   if (!res.ok) {
     throw new Error(`Failed to fetch batch content: HTTP ${res.status}`);
   }
-  const json = await res.json();
-  return json.data || [];
+  const text = await res.text();
+  try {
+    const json = JSON.parse(text);
+    return json.data || [];
+  } catch {
+    throw new Error(`Invalid response from /api/content: ${text.slice(0, 80)}`);
+  }
 }
 
 export async function fetchFolderContent(courseId: string, folderId: string | number): Promise<any[]> {
@@ -101,8 +116,13 @@ export async function fetchFolderContent(courseId: string, folderId: string | nu
   if (!res.ok) {
     throw new Error(`Failed to fetch folder content: HTTP ${res.status}`);
   }
-  const json = await res.json();
-  return json.data || [];
+  const text = await res.text();
+  try {
+    const json = JSON.parse(text);
+    return json.data || [];
+  } catch {
+    throw new Error(`Invalid response from /api/folder: ${text.slice(0, 80)}`);
+  }
 }
 
 export async function fetchVideoDetails(courseId: string, contentId: string | number): Promise<any> {
@@ -114,8 +134,13 @@ export async function fetchVideoDetails(courseId: string, contentId: string | nu
   if (!res.ok) {
     throw new Error(`Failed to fetch video details: HTTP ${res.status}`);
   }
-  const json = await res.json();
-  return json.data || null;
+  const text = await res.text();
+  try {
+    const json = JSON.parse(text);
+    return json.data || null;
+  } catch {
+    throw new Error(`Invalid response from /api/video-details: ${text.slice(0, 80)}`);
+  }
 }
 
 export function formatDuration(seconds: number | string | null | undefined): string {

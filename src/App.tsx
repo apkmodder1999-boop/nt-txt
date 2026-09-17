@@ -496,6 +496,16 @@ export default function App() {
               : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
             let parsedDownloads = parseDownloadUrls(fileData.download_urls || item.download_urls);
+            if (!streamUrl && parsedDownloads.length > 0) {
+              streamUrl = parsedDownloads[parsedDownloads.length - 1].url;
+            }
+
+            const dynamicLink = fileData.dynamic_link || item.dynamic_link || '';
+            if (fileType === 'test' && dynamicLink) {
+              if (!streamUrl) streamUrl = dynamicLink;
+              if (!pdfUrl) pdfUrl = dynamicLink;
+            }
+
             const rawDuration = fileData.duration || item.duration;
             let durationSec = 0;
             if (rawDuration) {
@@ -506,7 +516,7 @@ export default function App() {
               }
             }
 
-            if (deep && (!streamUrl || !pdfUrl || fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
+            if (deep && (!streamUrl || (fileType === 'notes' && !pdfUrl) || (fileType === 'dpp' && !pdfUrl))) {
               try {
                 const vidDetails = await fetchVideoDetails(targetCourseId, fid);
                 if (vidDetails) {
@@ -528,6 +538,9 @@ export default function App() {
                   }
                   if (vidDetails.download_urls && parsedDownloads.length === 0) {
                     parsedDownloads = parseDownloadUrls(vidDetails.download_urls);
+                    if (!streamUrl && parsedDownloads.length > 0) {
+                      streamUrl = parsedDownloads[parsedDownloads.length - 1].url;
+                    }
                   }
                 }
               } catch (e) {

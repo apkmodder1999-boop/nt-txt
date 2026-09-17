@@ -628,6 +628,8 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         const contentJson: any = await contentRes.json();
         const rootItems: any[] = contentJson.data || [];
 
+        let remainingSubrequests = 45;
+
         let totalFoldersCount = 0;
         let totalFilesCount = 0;
         let totalVideosCount = 0;
@@ -656,18 +658,24 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           });
 
           let items: any[] = [];
-          try {
-            const folderRes = await fetch(`${remoteBase}/content/folder`, {
-              method: 'POST',
-              headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ courseId, folderId: String(folderId) }),
-            });
-            if (folderRes.ok) {
-              const folderJson: any = await folderRes.json();
-              items = folderJson.data || [];
+          if (remainingSubrequests > 2) {
+            remainingSubrequests--;
+            try {
+              const folderRes = await fetch(`${remoteBase}/content/folder`, {
+                method: 'POST',
+                headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ courseId, folderId: String(folderId) }),
+                signal: AbortSignal.timeout(6000),
+              });
+              if (folderRes.ok) {
+                const folderJson: any = await folderRes.json();
+                items = folderJson.data || [];
+              }
+            } catch (err: any) {
+              await sendEvent('log', { message: `Warning: Failed folder "${folderTitle}": ${err.message}` });
             }
-          } catch (err: any) {
-            await sendEvent('log', { message: `Warning: Failed folder "${folderTitle}": ${err.message}` });
+          } else {
+            await sendEvent('log', { message: `Subrequest budget reached for folder "${folderTitle}" on Edge Worker.` });
           }
 
           const subFolders: any[] = [];
@@ -699,6 +707,19 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                 ? (fileData.file_url || fileData.pdf_url || '')
                 : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
+              const parsedDownloads = parseDownloadUrls(fileData.download_urls || item.download_urls);
+              // If video streamUrl is empty, use highest quality direct download link from cloudfront
+              if (!streamUrl && parsedDownloads.length > 0) {
+                streamUrl = parsedDownloads[parsedDownloads.length - 1].url;
+              }
+
+              const dynamicLink = fileData.dynamic_link || '';
+              // If test, populate stream/pdf with dynamic test link if not already set
+              if (fileType === 'test' && dynamicLink) {
+                if (!streamUrl) streamUrl = dynamicLink;
+                if (!pdfUrl) pdfUrl = dynamicLink;
+              }
+
               const rawDuration = fileData.duration || item.duration;
               let durationSec = 0;
               if (rawDuration) {
@@ -717,16 +738,17 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                 rawFileType: fileData.file_type || item.file_type,
                 streamUrl,
                 pdfUrl,
-                downloadUrls: parseDownloadUrls(fileData.download_urls || item.download_urls),
+                downloadUrls: parsedDownloads,
                 duration: formatDuration(durationSec),
                 durationSeconds: durationSec,
-                shareUrl: fileData.dynamic_link || '',
+                shareUrl: dynamicLink,
                 isLocked: Boolean(fileData.is_locked),
                 isDrm: Boolean(fileData.is_drm),
                 path: fullPath,
               };
 
-              if (deepFileDetails && (!streamUrl || !fileObj.shareUrl || fileType === 'notes' || fileType === 'dpp' || fileType === 'test' || fileType === 'video')) {
+              // Only probe video-details if we still don't have a streamUrl or pdfUrl
+              if (deepFileDetails && (!streamUrl || (fileType === 'notes' && !pdfUrl) || (fileType === 'dpp' && !pdfUrl))) {
                 filesNeedingDetails.push({ fileObj, itemId: fid });
               }
 
@@ -814,22 +836,27 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           }
         }
 
-        // Deep file details
-        if (deepFileDetails && filesNeedingDetails.length > 0) {
+        // Deep file details (strictly budgeted to prevent Cloudflare subrequest crashes)
+        if (deepFileDetails && filesNeedingDetails.length > 0 && remainingSubrequests > 2) {
+          const maxProbes = Math.min(filesNeedingDetails.length, remainingSubrequests - 2);
+          const toProbe = filesNeedingDetails.slice(0, maxProbes);
+
           await sendEvent('status', {
-            message: `Extracting direct stream URLs & document links for ${filesNeedingDetails.length} items...`,
+            message: `Resolving direct links for ${toProbe.length} items (budgeted for Edge runtime)...`,
           });
 
-          const CONCURRENCY = 8;
-          for (let i = 0; i < filesNeedingDetails.length; i += CONCURRENCY) {
-            const chunk = filesNeedingDetails.slice(i, i + CONCURRENCY);
+          const CONCURRENCY = 6;
+          for (let i = 0; i < toProbe.length; i += CONCURRENCY) {
+            const chunk = toProbe.slice(i, i + CONCURRENCY);
             await Promise.all(
               chunk.map(async ({ fileObj, itemId }) => {
+                remainingSubrequests--;
                 try {
                   const vdRes = await fetch(`${remoteBase}/video-details`, {
                     method: 'POST',
                     headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ courseId, contentId: String(itemId) }),
+                    signal: AbortSignal.timeout(6000),
                   });
                   if (vdRes.ok) {
                     const vdJson: any = await vdRes.json();
@@ -863,9 +890,9 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               })
             );
 
-            if (i % 16 === 0 || i + CONCURRENCY >= filesNeedingDetails.length) {
+            if (i % 12 === 0 || i + CONCURRENCY >= toProbe.length) {
               await sendEvent('progress', {
-                folder: `Resolved details: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
+                folder: `Resolved details: ${Math.min(i + CONCURRENCY, toProbe.length)} / ${toProbe.length}`,
                 totalFolders: totalFoldersCount,
                 totalFiles: totalFilesCount,
               });
