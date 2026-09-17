@@ -539,10 +539,18 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
     const dppFiles = allFilesList.filter((f) => f.type === 'dpp');
     const testAndOtherFiles = allFilesList.filter((f) => f.type === 'test' || f.type === 'other');
 
+    const watermarkHeader = `# ==============================================================================
+# Built by t.me/devnaitikanonymous
+# Official Updates: t.me/learn_topper
+# ==============================================================================
+
+`;
+
     // --------------------------------------------------------------------------
     // A) DIRECT STREAM & CONTENT LINKS TXT (Named Classes, Stream URL ONLY, Notes & DPPs)
     // --------------------------------------------------------------------------
-    let directLinksTxt = `# ==============================================================================\n`;
+    let directLinksTxt = watermarkHeader;
+    directLinksTxt += `# ==============================================================================\n`;
     directLinksTxt += `# BATCH CONTENT & STREAM LINKS: ${courseTitle}\n`;
     directLinksTxt += `# Course ID: ${courseId} | Generated on: ${dateNow}\n`;
     directLinksTxt += `# Summary: ${videoFiles.length} Classes/Videos | ${noteFiles.length} Class Notes | ${dppFiles.length} DPPs | ${testAndOtherFiles.length} Tests\n`;
@@ -614,7 +622,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
     // --------------------------------------------------------------------------
     // B) RAW URLS ONLY (Stream URLs for Videos, Direct URLs for Notes/DPPs)
     // --------------------------------------------------------------------------
-    let rawUrlsTxt = `# Stream URLs & Content Links for Course: ${courseTitle} (ID: ${courseId})\n`;
+    let rawUrlsTxt = `# ==============================================================================\n# Built by t.me/devnaitikanonymous\n# Official Updates: t.me/learn_topper\n# ==============================================================================\n# Stream URLs & Content Links for Course: ${courseTitle} (ID: ${courseId})\n`;
     rawUrlsTxt += `# Generated on: ${dateNow}\n\n`;
     rawUrlsTxt += `# --- STREAM VIDEOS (.M3U8) ---\n`;
     videoFiles.forEach((v) => {
@@ -657,6 +665,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
       'N/A';
 
     let txt = '';
+    txt += `======================================================================\n`;
+    txt += `Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
     txt += `======================================================================\n`;
     txt += `${courseTitle}\n`;
     txt += `======================================================================\n`;
@@ -755,7 +765,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
     // Specifically tailored for HTML Maker Bots (@AlsoRaOne / Hub bot)
     // Prevents bots from falling back to generic "Link 1" names
     // --------------------------------------------------------------------------
-    let botFormatTxt = '';
+    let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
     allFilesList.forEach((file) => {
       const isVideo = file.type === 'video';
       const targetUrl = isVideo ? file.streamUrl : (file.pdfUrl || file.streamUrl);

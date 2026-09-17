@@ -17,6 +17,7 @@ import {
   Sparkles,
   Bot,
   SlidersHorizontal,
+  Send,
 } from 'lucide-react';
 import { ExtractionResult } from '../types';
 import { ContentTreeViewer } from './ContentTreeViewer';
@@ -67,7 +68,9 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result }) => {
 
   // Dynamically generate the Bot-ready TXT matching [CATEGORY] Title: link
   const generateBotText = (): string => {
-    let lines: string[] = [];
+    let lines: string[] = [
+      '// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper',
+    ];
     const files = result.allFiles.filter((f) => {
       if (botFilterType === 'all') return true;
       if (botFilterType === 'video') return f.type === 'video';
@@ -202,6 +205,16 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result }) => {
               <FileText className="w-4 h-4" />
               <span>Full Report</span>
             </button>
+
+            <a
+              href="https://t.me/learn_topper"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3.5 py-2 rounded-lg border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 text-xs font-semibold transition flex items-center space-x-1.5 cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Join Channel</span>
+            </a>
           </div>
         </div>
 

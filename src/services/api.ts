@@ -179,8 +179,16 @@ export function generateTxtFiles(
   const dppFiles = allFiles.filter((f) => f.type === 'dpp');
   const testAndOtherFiles = allFiles.filter((f) => f.type === 'test' || f.type === 'other');
 
+  const watermarkHeader = `# ==============================================================================
+# Built by t.me/devnaitikanonymous
+# Official Updates: t.me/learn_topper
+# ==============================================================================
+
+`;
+
   // 1. Direct Links TXT formatted with Named Classes, Stream URL ONLY, Notes, DPPs
-  let directLinksTxt = `# ==============================================================================\n`;
+  let directLinksTxt = watermarkHeader;
+  directLinksTxt += `# ==============================================================================\n`;
   directLinksTxt += `# BATCH CONTENT & STREAM LINKS: ${courseTitle}\n`;
   directLinksTxt += `# Course ID: ${courseId} | Generated on: ${dateNow}\n`;
   directLinksTxt += `# Summary: ${videoFiles.length} Classes/Videos | ${noteFiles.length} Class Notes | ${dppFiles.length} DPPs | ${testAndOtherFiles.length} Tests\n`;
@@ -250,8 +258,12 @@ export function generateTxtFiles(
   }
 
   // 2. Raw URLs Only (for stream URLs and document links)
-  let rawUrlsTxt = `# Stream URLs & Content Links for Course: ${courseTitle} (ID: ${courseId})\n`;
-  rawUrlsTxt += `# Generated on: ${dateNow}\n\n`;
+  let rawUrlsTxt = `# ==============================================================================
+# Built by t.me/devnaitikanonymous
+# Official Updates: t.me/learn_topper
+# ==============================================================================
+# Stream URLs & Content Links for Course: ${courseTitle} (ID: ${courseId})
+# Generated on: ${dateNow}\n\n`;
   rawUrlsTxt += `# --- STREAM VIDEOS (.M3U8) ---\n`;
   videoFiles.forEach((v) => {
     if (v.streamUrl) rawUrlsTxt += `${v.streamUrl}\n`;
@@ -308,6 +320,8 @@ export function generateTxtFiles(
     .trim();
 
   let txt = `======================================================================\n`;
+  txt += `Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
+  txt += `======================================================================\n`;
   txt += `${courseTitle}\n`;
   txt += `======================================================================\n`;
   txt += `Course ID : ${courseId}\n`;
@@ -378,7 +392,7 @@ export function generateTxtFiles(
     });
 
   // 5. Bot-Compatible Format ([CATEGORY] Title: link)
-  let botFormatTxt = '';
+  let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
   allFiles.forEach((file) => {
     const isVideo = file.type === 'video';
     const targetUrl = isVideo ? file.streamUrl : (file.pdfUrl || file.streamUrl);

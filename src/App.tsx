@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ResultViewer } from './components/ResultViewer';
+import { TelegramJoinModal } from './components/TelegramJoinModal';
 import {
   fetchBatches,
   fetchCourseDetails,
@@ -28,6 +29,7 @@ import {
   RefreshCw,
   SlidersHorizontal,
   X,
+  Send,
 } from 'lucide-react';
 
 export default function App() {
@@ -511,14 +513,27 @@ export default function App() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsDark((prev) => !prev)}
-            aria-label="Toggle theme"
-            className="rounded-lg border border-input bg-card p-2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer shrink-0"
-          >
-            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              id="header-tg-btn"
+              href="https://t.me/learn_topper"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-colors cursor-pointer"
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span>Join Channel</span>
+            </a>
+
+            <button
+              type="button"
+              onClick={() => setIsDark((prev) => !prev)}
+              aria-label="Toggle theme"
+              className="rounded-lg border border-input bg-card p-2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer shrink-0"
+            >
+              {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
 
         {/* Input Card matching nt-extractor.lovable.app */}
@@ -751,10 +766,37 @@ export default function App() {
         </div>
 
         {/* Footer */}
-        <footer className="mt-16 text-center text-xs text-muted-foreground pb-8">
-          Batch Extractor — Export any course as a TXT file
+        <footer className="mt-16 text-center text-xs text-muted-foreground pb-8 space-y-2">
+          <p>
+            Built by{' '}
+            <a
+              href="https://t.me/devnaitikanonymous"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-foreground hover:underline"
+            >
+              t.me/devnaitikanonymous
+            </a>{' '}
+            • Join community at{' '}
+            <a
+              href="https://t.me/learn_topper"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-sky-600 dark:text-sky-400 hover:underline"
+            >
+              t.me/learn_topper
+            </a>
+          </p>
+          <p className="text-muted-foreground/70">Batch Extractor — Export any course as a TXT file</p>
         </footer>
       </div>
+
+      {/* Telegram Join Channel Popup */}
+      <TelegramJoinModal
+        channelUrl="https://t.me/learn_topper"
+        channelName="t.me/learn_topper"
+        developerUrl="https://t.me/devnaitikanonymous"
+      />
     </main>
   );
 }

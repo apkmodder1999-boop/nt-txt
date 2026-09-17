@@ -517,7 +517,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         await sendEvent('status', { message: 'Compiling structured bot-format TXT report...' });
 
         // Generate Bot Format TXT
-        let botFormatTxt = '';
+        let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
         allFilesList.forEach((file) => {
           const isVideo = file.type === 'video';
           const targetUrl = isVideo ? file.streamUrl : file.pdfUrl || file.streamUrl;
@@ -541,7 +541,11 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
 
         // Direct links TXT
         const courseTitle = courseDetails?.title || `Course_${courseId}`;
-        let directLinksTxt = `# BATCH CONTENT: ${courseTitle}\n# Course ID: ${courseId}\n\n`;
+        let directLinksTxt = `# ==============================================================================
+# Built by t.me/devnaitikanonymous
+# Official Updates: t.me/learn_topper
+# ==============================================================================
+# BATCH CONTENT: ${courseTitle}\n# Course ID: ${courseId}\n\n`;
         allFilesList.forEach((file) => {
           const target = file.streamUrl || file.pdfUrl || '';
           if (target) {
