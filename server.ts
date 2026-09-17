@@ -592,8 +592,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
           filesInFolder.push(fileEntry);
           allFilesList.push(fileEntry);
 
-          // If streamUrl is missing or link missing or it's a note/dpp (whose pdf link is in video-details)
-          if (deepFileDetails && (!streamUrl || !fileEntry.shareUrl || category === 'notes' || category === 'dpp')) {
+          // If streamUrl is missing or link missing or it's a note/dpp/test (whose link is in video-details)
+          if (deepFileDetails && (!streamUrl || !fileEntry.shareUrl || category === 'notes' || category === 'dpp' || category === 'test')) {
             filesNeedingDetails.push(fileEntry);
           }
 
@@ -663,7 +663,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
         };
         allFilesList.push(fileEntry);
 
-        if (deepFileDetails && (!streamUrl || category === 'notes' || category === 'dpp')) {
+        if (deepFileDetails && (!streamUrl || category === 'notes' || category === 'dpp' || category === 'test')) {
           filesNeedingDetails.push(fileEntry);
         }
       }
@@ -685,7 +685,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
                 method: 'POST',
                 headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ courseId, contentId: String(fileItem.id) }),
-                signal: AbortSignal.timeout(3500),
+                signal: AbortSignal.timeout(8000),
               });
               if (vdRes.ok) {
                 const vdJson = await vdRes.json();

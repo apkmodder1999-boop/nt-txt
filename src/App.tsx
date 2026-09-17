@@ -472,8 +472,12 @@ export default function App() {
         const files: ExtractedFileItem[] = [];
 
         for (const item of items) {
-          if (item.type === 'folder' || item.is_folder || item.item_type === 'folder') {
-            const sub = await crawlSubFolder(item.id, item.title || item.name || 'Folder', [
+          const isFolder = item.type === 'folder' || item.is_folder || item.item_type === 'folder';
+          const entityId = item.entity_id || item.data?.id || item.id;
+          const itemTitle = item.title || item.data?.title || item.name || 'Untitled';
+
+          if (isFolder) {
+            const sub = await crawlSubFolder(entityId, itemTitle, [
               ...path,
               title,
             ]);
@@ -482,27 +486,47 @@ export default function App() {
             filesCount++;
             setTotalFiles(filesCount);
 
-            const fileType = classifyFile(
-              item.title || item.name || '',
-              folderPath,
-              item
-            );
-            let streamUrl = item.stream_url || item.url || item.link || '';
-            let pdfUrl = item.pdf_url || item.document_url || '';
-            let parsedDownloads: any[] = [];
-            let duration = item.duration ? formatDuration(item.duration) : 'N/A';
+            const fileData = item.data || item;
+            const fid = item.entity_id || fileData.id || item.id || `file_${filesCount}`;
+            const fileType = classifyFile(itemTitle, folderPath, fileData);
 
-            if (item.download_urls) {
-              parsedDownloads = parseDownloadUrls(item.download_urls);
+            let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+            let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
+              ? (fileData.file_url || fileData.pdf_url || '')
+              : (fileData.pdf_url || item.pdf_url || item.document_url || '');
+
+            let parsedDownloads = parseDownloadUrls(fileData.download_urls || item.download_urls);
+            const rawDuration = fileData.duration || item.duration;
+            let durationSec = 0;
+            if (rawDuration) {
+              const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
+              if (!isNaN(s) && s > 0) {
+                durationSec = s;
+                durationSum += s;
+              }
             }
 
-            if (fileType === 'video' && (!streamUrl || deep)) {
+            if (deep && (!streamUrl || !pdfUrl || fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
               try {
-                const vidDetails = await fetchVideoDetails(targetCourseId, item.id);
+                const vidDetails = await fetchVideoDetails(targetCourseId, fid);
                 if (vidDetails) {
-                  if (vidDetails.stream_url) streamUrl = vidDetails.stream_url;
-                  if (vidDetails.duration) duration = formatDuration(vidDetails.duration);
-                  if (vidDetails.download_urls) {
+                  if (vidDetails.file_url) {
+                    if (fileType === 'video') {
+                      streamUrl = vidDetails.file_url;
+                    } else {
+                      pdfUrl = vidDetails.file_url;
+                      streamUrl = vidDetails.file_url;
+                    }
+                  }
+                  if (vidDetails.stream_url && !streamUrl) streamUrl = vidDetails.stream_url;
+                  if (vidDetails.duration && durationSec === 0) {
+                    const d = typeof vidDetails.duration === 'string' ? parseInt(vidDetails.duration, 10) : vidDetails.duration;
+                    if (!isNaN(d) && d > 0) {
+                      durationSec = d;
+                      durationSum += d;
+                    }
+                  }
+                  if (vidDetails.download_urls && parsedDownloads.length === 0) {
                     parsedDownloads = parseDownloadUrls(vidDetails.download_urls);
                   }
                 }
@@ -522,13 +546,13 @@ export default function App() {
             setTotalDpps(dppsCount);
 
             const fileObj: ExtractedFileItem = {
-              id: String(item.id),
-              title: item.title || item.name || `Item_${item.id}`,
+              id: String(fid),
+              title: itemTitle,
               type: fileType,
               streamUrl,
               pdfUrl,
               downloadUrls: parsedDownloads,
-              duration,
+              duration: formatDuration(durationSec),
               path: folderPath,
             };
 
@@ -543,31 +567,53 @@ export default function App() {
       const rootFolders: ExtractedFolderNode[] = [];
 
       for (const item of rootItems) {
-        if (item.type === 'folder' || item.is_folder || item.item_type === 'folder') {
+        const isFolder = item.type === 'folder' || item.is_folder || item.item_type === 'folder';
+        const entityId = item.entity_id || item.data?.id || item.id;
+        const itemTitle = item.title || item.data?.title || item.name || 'Root Folder';
+
+        if (isFolder) {
           const folderNode = await crawlSubFolder(
-            item.id,
-            item.title || item.name || 'Folder',
+            entityId,
+            itemTitle,
             []
           );
           rootFolders.push(folderNode);
         } else {
           filesCount++;
           setTotalFiles(filesCount);
-          const fileType = classifyFile(item.title || item.name || '', 'Root', item);
+          const fileData = item.data || item;
+          const fid = item.entity_id || fileData.id || item.id || `file_${filesCount}`;
+          const fileType = classifyFile(itemTitle, 'Root', fileData);
+
           if (fileType === 'video') videosCount++;
           else if (fileType === 'notes') notesCount++;
           else if (fileType === 'dpp') dppsCount++;
           else if (fileType === 'test') testsCount++;
           else linksCount++;
 
+          let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+          let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
+            ? (fileData.file_url || fileData.pdf_url || '')
+            : (fileData.pdf_url || item.pdf_url || item.document_url || '');
+
+          const rawDuration = fileData.duration || item.duration;
+          let durationSec = 0;
+          if (rawDuration) {
+            const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
+            if (!isNaN(s) && s > 0) {
+              durationSec = s;
+              durationSum += s;
+            }
+          }
+
           const fileObj: ExtractedFileItem = {
-            id: String(item.id),
-            title: item.title || item.name || `Item_${item.id}`,
+            id: String(fid),
+            title: itemTitle,
             type: fileType,
-            streamUrl: item.stream_url || item.url || '',
-            pdfUrl: item.pdf_url || '',
-            downloadUrls: parseDownloadUrls(item.download_urls),
-            duration: item.duration ? formatDuration(item.duration) : 'N/A',
+            streamUrl,
+            pdfUrl,
+            downloadUrls: parseDownloadUrls(fileData.download_urls || item.download_urls),
+            duration: formatDuration(durationSec),
             path: 'Root',
           };
           allFilesList.push(fileObj);

@@ -674,12 +674,19 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           const files: any[] = [];
 
           for (const item of items) {
-            if (item.type === 'folder' || item.is_folder || item.item_type === 'folder') {
-              const sub = await crawlFolder(item.id, item.title || item.name || 'Folder', currentPathArr);
+            const isFolder = item.type === 'folder' || item.is_folder || item.item_type === 'folder';
+            const entityId = item.entity_id || item.data?.id || item.id;
+            const itemTitle = item.title || item.data?.title || item.name || 'Untitled';
+
+            if (isFolder) {
+              const sub = await crawlFolder(entityId, itemTitle, currentPathArr);
               subFolders.push(sub);
             } else {
               totalFilesCount++;
-              const fileType = classifyFile(item.title || item.name || '', pathStr, item);
+              const fileData = item.data || item;
+              const fid = item.entity_id || fileData.id || item.id || `file_${totalFilesCount}`;
+              const fullPath = pathStr;
+              const fileType = classifyFile(itemTitle, fullPath, fileData);
 
               if (fileType === 'video') totalVideosCount++;
               else if (fileType === 'notes') totalNotesCount++;
@@ -687,29 +694,40 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               else if (fileType === 'test') totalTestsCount++;
               else totalLinksCount++;
 
-              let streamUrl = item.stream_url || item.url || item.link || '';
-              let pdfUrl = item.pdf_url || item.document_url || '';
-              let parsedDownloads = parseDownloadUrls(item.download_urls);
-              let duration = item.duration ? formatDuration(item.duration) : 'N/A';
+              let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+              let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
+                ? (fileData.file_url || fileData.pdf_url || '')
+                : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
-              if (item.duration) {
-                const s = typeof item.duration === 'string' ? parseInt(item.duration, 10) : item.duration;
-                if (!isNaN(s)) totalDurationSeconds += s;
+              const rawDuration = fileData.duration || item.duration;
+              let durationSec = 0;
+              if (rawDuration) {
+                const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
+                if (!isNaN(s) && s > 0) {
+                  durationSec = s;
+                  totalDurationSeconds += s;
+                }
               }
 
               const fileObj = {
-                id: String(item.id),
-                title: item.title || item.name || `File_${item.id}`,
+                id: String(fid),
+                title: itemTitle,
+                className: itemTitle,
                 type: fileType,
+                rawFileType: fileData.file_type || item.file_type,
                 streamUrl,
                 pdfUrl,
-                downloadUrls: parsedDownloads,
-                duration,
-                path: pathStr,
+                downloadUrls: parseDownloadUrls(fileData.download_urls || item.download_urls),
+                duration: formatDuration(durationSec),
+                durationSeconds: durationSec,
+                shareUrl: fileData.dynamic_link || '',
+                isLocked: Boolean(fileData.is_locked),
+                isDrm: Boolean(fileData.is_drm),
+                path: fullPath,
               };
 
-              if (fileType === 'video' && (!streamUrl || deepFileDetails)) {
-                filesNeedingDetails.push({ fileObj, itemId: item.id });
+              if (deepFileDetails && (!streamUrl || !fileObj.shareUrl || fileType === 'notes' || fileType === 'dpp' || fileType === 'test' || fileType === 'video')) {
+                filesNeedingDetails.push({ fileObj, itemId: fid });
               }
 
               files.push(fileObj);
@@ -737,12 +755,18 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
 
         const treeNodes: any[] = [];
         for (const item of rootItems) {
-          if (item.type === 'folder' || item.is_folder || item.item_type === 'folder') {
-            const folderNode = await crawlFolder(item.id, item.title || item.name || 'Folder', []);
+          const isFolder = item.type === 'folder' || item.is_folder || item.item_type === 'folder';
+          const entityId = item.entity_id || item.data?.id || item.id;
+          const itemTitle = item.title || item.data?.title || item.name || 'Root Folder';
+
+          if (isFolder) {
+            const folderNode = await crawlFolder(entityId, itemTitle, []);
             treeNodes.push(folderNode);
           } else {
             totalFilesCount++;
-            const fileType = classifyFile(item.title || item.name || '', 'Root', item);
+            const fileData = item.data || item;
+            const fid = item.entity_id || fileData.id || item.id || `file_${totalFilesCount}`;
+            const fileType = classifyFile(itemTitle, 'Root', fileData);
 
             if (fileType === 'video') totalVideosCount++;
             else if (fileType === 'notes') totalNotesCount++;
@@ -750,19 +774,40 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
             else if (fileType === 'test') totalTestsCount++;
             else totalLinksCount++;
 
+            let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+            let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
+              ? (fileData.file_url || fileData.pdf_url || '')
+              : (fileData.pdf_url || item.pdf_url || item.document_url || '');
+
+            const rawDuration = fileData.duration || item.duration;
+            let durationSec = 0;
+            if (rawDuration) {
+              const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
+              if (!isNaN(s) && s > 0) {
+                durationSec = s;
+                totalDurationSeconds += s;
+              }
+            }
+
             const fileObj = {
-              id: String(item.id),
-              title: item.title || item.name || `File_${item.id}`,
+              id: String(fid),
+              title: itemTitle,
+              className: itemTitle,
               type: fileType,
-              streamUrl: item.stream_url || item.url || '',
-              pdfUrl: item.pdf_url || '',
-              downloadUrls: parseDownloadUrls(item.download_urls),
-              duration: item.duration ? formatDuration(item.duration) : 'N/A',
+              rawFileType: fileData.file_type || item.file_type,
+              streamUrl,
+              pdfUrl,
+              downloadUrls: parseDownloadUrls(fileData.download_urls || item.download_urls),
+              duration: formatDuration(durationSec),
+              durationSeconds: durationSec,
+              shareUrl: fileData.dynamic_link || '',
+              isLocked: Boolean(fileData.is_locked),
+              isDrm: Boolean(fileData.is_drm),
               path: 'Root',
             };
 
-            if (fileType === 'video' && (!fileObj.streamUrl || deepFileDetails)) {
-              filesNeedingDetails.push({ fileObj, itemId: item.id });
+            if (deepFileDetails && (!streamUrl || !fileObj.shareUrl || fileType === 'notes' || fileType === 'dpp' || fileType === 'test' || fileType === 'video')) {
+              filesNeedingDetails.push({ fileObj, itemId: fid });
             }
 
             allFilesList.push(fileObj);
@@ -772,10 +817,10 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         // Deep file details
         if (deepFileDetails && filesNeedingDetails.length > 0) {
           await sendEvent('status', {
-            message: `Extracting direct stream URLs for ${filesNeedingDetails.length} videos...`,
+            message: `Extracting direct stream URLs & document links for ${filesNeedingDetails.length} items...`,
           });
 
-          const CONCURRENCY = 4;
+          const CONCURRENCY = 8;
           for (let i = 0; i < filesNeedingDetails.length; i += CONCURRENCY) {
             const chunk = filesNeedingDetails.slice(i, i + CONCURRENCY);
             await Promise.all(
@@ -788,27 +833,39 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                   });
                   if (vdRes.ok) {
                     const vdJson: any = await vdRes.json();
-                    const vdata = vdJson.data || vdJson;
-                    if (vdata) {
-                      if (vdata.stream_url) fileObj.streamUrl = vdata.stream_url;
-                      if (vdata.pdf_url && !fileObj.pdfUrl) fileObj.pdfUrl = vdata.pdf_url;
-                      if (vdata.download_urls) {
-                        fileObj.downloadUrls = parseDownloadUrls(vdata.download_urls);
+                    const vdData = vdJson.data || vdJson || {};
+                    if (vdData.file_url) {
+                      if (fileObj.type === 'video') {
+                        fileObj.streamUrl = vdData.file_url;
+                      } else {
+                        fileObj.pdfUrl = vdData.file_url;
+                        fileObj.streamUrl = vdData.file_url;
                       }
-                      if (vdata.duration) {
-                        fileObj.duration = formatDuration(vdata.duration);
+                    }
+                    if (vdData.dynamic_link) {
+                      fileObj.shareUrl = vdData.dynamic_link;
+                    }
+                    if (vdData.download_urls && (!fileObj.downloadUrls || fileObj.downloadUrls.length === 0)) {
+                      fileObj.downloadUrls = parseDownloadUrls(vdData.download_urls);
+                    }
+                    if (vdData.duration && (!fileObj.durationSeconds || fileObj.durationSeconds === 0)) {
+                      const dNum = parseInt(String(vdData.duration), 10);
+                      if (!isNaN(dNum) && dNum > 0) {
+                        fileObj.durationSeconds = dNum;
+                        fileObj.duration = formatDuration(dNum);
+                        totalDurationSeconds += dNum;
                       }
                     }
                   }
                 } catch {
-                  // ignore
+                  // ignore single item failure
                 }
               })
             );
 
-            if (i % 8 === 0) {
+            if (i % 16 === 0 || i + CONCURRENCY >= filesNeedingDetails.length) {
               await sendEvent('progress', {
-                folder: `Resolved video streams: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
+                folder: `Resolved details: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
                 totalFolders: totalFoldersCount,
                 totalFiles: totalFilesCount,
               });
@@ -816,9 +873,95 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           }
         }
 
-        await sendEvent('status', { message: 'Compiling structured bot-format TXT report...' });
+        await sendEvent('status', { message: 'Compiling structured bot-format and direct links TXT reports...' });
 
-        // Generate Bot Format TXT
+        const dateNow = new Date().toISOString();
+        const courseTitle = courseDetails?.title || `Course_${courseId}`;
+
+        // Group files by type
+        const videoFiles = allFilesList.filter((f) => f.type === 'video');
+        const noteFiles = allFilesList.filter((f) => f.type === 'notes');
+        const dppFiles = allFilesList.filter((f) => f.type === 'dpp');
+        const testAndOtherFiles = allFilesList.filter((f) => f.type === 'test' || f.type === 'other');
+
+        const watermarkHeader = `# ==============================================================================
+# Built by t.me/devnaitikanonymous
+# Official Updates: t.me/learn_topper
+# ==============================================================================
+
+`;
+
+        // 1. Direct Links TXT formatted with Named Classes, Stream URL ONLY, Notes, DPPs
+        let directLinksTxt = watermarkHeader;
+        directLinksTxt += `# ==============================================================================\n`;
+        directLinksTxt += `# BATCH CONTENT & STREAM LINKS: ${courseTitle}\n`;
+        directLinksTxt += `# Course ID: ${courseId} | Generated on: ${dateNow}\n`;
+        directLinksTxt += `# Summary: ${videoFiles.length} Classes/Videos | ${noteFiles.length} Class Notes | ${dppFiles.length} DPPs | ${testAndOtherFiles.length} Tests\n`;
+        directLinksTxt += `# ==============================================================================\n\n`;
+
+        // Section 1: Classes & Video Lectures (Stream Only)
+        directLinksTxt += `# ==============================================================================\n`;
+        directLinksTxt += `# 1. CLASSES & VIDEO LECTURES (STREAM ONLY)\n`;
+        directLinksTxt += `# ==============================================================================\n\n`;
+
+        if (videoFiles.length === 0) {
+          directLinksTxt += `# No video lectures found in this batch.\n\n`;
+        } else {
+          videoFiles.forEach((file) => {
+            const durationStr = file.duration && file.duration !== 'N/A' ? `  (Duration: ${file.duration})` : '';
+            directLinksTxt += `[VIDEO] ${file.title}  (id: ${file.id})${durationStr}: ${file.streamUrl || 'N/A'}\n`;
+            directLinksTxt += `Folder: ${file.path}\n\n`;
+            directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
+          });
+        }
+
+        // Section 2: Class Notes (PDFs)
+        directLinksTxt += `\n# ==============================================================================\n`;
+        directLinksTxt += `# 2. CLASS NOTES / LECTURE NOTES (PDF)\n`;
+        directLinksTxt += `# ==============================================================================\n\n`;
+
+        if (noteFiles.length === 0) {
+          directLinksTxt += `# No class notes found in this batch.\n\n`;
+        } else {
+          noteFiles.forEach((file) => {
+            const pdfLink = file.pdfUrl || file.streamUrl;
+            directLinksTxt += `[PDF] ${file.title}  (id: ${file.id}): ${pdfLink || 'N/A'}\n`;
+            directLinksTxt += `Folder: ${file.path}\n\n`;
+            directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
+          });
+        }
+
+        // Section 3: DPPs & Practice Sheets (PDFs)
+        directLinksTxt += `\n# ==============================================================================\n`;
+        directLinksTxt += `# 3. DPPS & PRACTICE SHEETS (PDF)\n`;
+        directLinksTxt += `# ==============================================================================\n\n`;
+
+        if (dppFiles.length === 0) {
+          directLinksTxt += `# No DPPs or practice sheets found in this batch.\n\n`;
+        } else {
+          dppFiles.forEach((file) => {
+            const pdfLink = file.pdfUrl || file.streamUrl;
+            directLinksTxt += `[PDF] DPP - ${file.title}  (id: ${file.id}): ${pdfLink || 'N/A'}\n`;
+            directLinksTxt += `Subject: ${file.path}\n\n`;
+            directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
+          });
+        }
+
+        // Section 4: Tests & Study Materials
+        if (testAndOtherFiles.length > 0) {
+          directLinksTxt += `\n# ==============================================================================\n`;
+          directLinksTxt += `# 4. TESTS & STUDY MATERIALS\n`;
+          directLinksTxt += `# ==============================================================================\n\n`;
+
+          testAndOtherFiles.forEach((file) => {
+            const link = file.pdfUrl || file.streamUrl;
+            directLinksTxt += `[PDF] Test - ${file.title}  (id: ${file.id}): ${link || 'N/A'}\n`;
+            directLinksTxt += `Folder: ${file.path}\n\n`;
+            directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
+          });
+        }
+
+        // 2. Generate Bot Format TXT
         let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
         allFilesList.forEach((file) => {
           const isVideo = file.type === 'video';
@@ -841,19 +984,30 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           botFormatTxt += `[${cat}] ${titleDisplay}${idSuffix}${durationSuffix}: ${targetUrl}\n`;
         });
 
-        // Direct links TXT
-        const courseTitle = courseDetails?.title || `Course_${courseId}`;
-        let directLinksTxt = `# ==============================================================================
-# Built by t.me/devnaitikanonymous
-# Official Updates: t.me/learn_topper
-# ==============================================================================
-# BATCH CONTENT: ${courseTitle}\n# Course ID: ${courseId}\n\n`;
-        allFilesList.forEach((file) => {
-          const target = file.streamUrl || file.pdfUrl || '';
-          if (target) {
-            directLinksTxt += `[${file.type.toUpperCase()}] ${file.title}: ${target}\nFolder: ${file.path}\n\n`;
-          }
+        // 3. Raw URLs
+        let rawUrlsTxt = `# ==============================================================================\n# Built by t.me/devnaitikanonymous\n# Official Updates: t.me/learn_topper\n# ==============================================================================\n# Stream URLs & Content Links for Course: ${courseTitle} (ID: ${courseId})\n# Generated on: ${dateNow}\n\n`;
+        rawUrlsTxt += `# --- STREAM VIDEOS (.M3U8) ---\n`;
+        videoFiles.forEach((v) => {
+          if (v.streamUrl) rawUrlsTxt += `${v.streamUrl}\n`;
         });
+        rawUrlsTxt += `\n# --- CLASS NOTES ---\n`;
+        noteFiles.forEach((p) => {
+          const link = p.pdfUrl || p.streamUrl;
+          if (link) rawUrlsTxt += `${link}\n`;
+        });
+        rawUrlsTxt += `\n# --- DPPS & PRACTICE SHEETS ---\n`;
+        dppFiles.forEach((d) => {
+          const link = d.pdfUrl || d.streamUrl;
+          if (link) rawUrlsTxt += `${link}\n`;
+        });
+
+        // 4. M3U Playlist
+        let m3u = `#EXTM3U\n# Course: ${courseTitle} (ID: ${courseId})\n\n`;
+        videoFiles
+          .filter((f) => f.streamUrl)
+          .forEach((v) => {
+            m3u += `#EXTINF:-1 group-title="${v.path.replace(/"/g, '')}",Class: ${v.title.replace(/,/g, ' ')}\n${v.streamUrl}\n`;
+          });
 
         const finalResult = {
           platform: 'NT',
@@ -873,11 +1027,11 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           },
           rootFolders: treeNodes,
           allFiles: allFilesList,
-          txtReport: botFormatTxt,
+          txtReport: directLinksTxt,
           botFormatTxt,
           directLinksTxt,
-          rawUrlsTxt: allFilesList.map((f) => f.streamUrl || f.pdfUrl).filter(Boolean).join('\n'),
-          m3uPlaylist: `#EXTM3U\n# Course: ${courseTitle}\n`,
+          rawUrlsTxt,
+          m3uPlaylist: m3u,
         };
 
         await sendEvent('complete', finalResult);
