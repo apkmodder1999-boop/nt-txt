@@ -1,0 +1,8 @@
+name = "batch-extractor"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+[vars]
+# Optional remote service override if required
+# REMOTE_SERVICE_URL = "https://learnjh_api.learnjhapi.workers.dev/api/nexttoppers"

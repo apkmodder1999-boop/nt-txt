@@ -1,0 +1,6 @@
+{
+  "name": "Batch Extractor",
+  "description": "Enter a course ID and download a complete TXT file with every folder, lecture, PDF and video link of the batch.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
