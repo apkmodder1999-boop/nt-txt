@@ -1,4 +1,10 @@
 import type { EventContext } from '@cloudflare/workers-types';
+import {
+  generateSWTxt,
+  generateSWM3U,
+  generateSWBash,
+  generateSWPowerShell,
+} from '../../src/services/swGenerators';
 
 interface Env {
   REMOTE_SERVICE_URL?: string;
@@ -268,10 +274,16 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
   }
 
   // SW (Selection Way) Endpoints
+  const SW_HEADERS = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    Accept: 'application/json',
+  };
+
   if (pathname === '/api/sw/courses' && request.method === 'GET') {
     try {
       const res = await fetch('https://backend.multistreaming.site/api/courses', {
-        headers: DEFAULT_HEADERS,
+        headers: SW_HEADERS,
       });
       const data = await res.json();
       return new Response(JSON.stringify(data), {
@@ -290,9 +302,12 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
     try {
       const parts = pathname.split('/');
       const courseId = parts[parts.length - 2];
-      const res = await fetch(`https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`, {
-        headers: DEFAULT_HEADERS,
-      });
+      const res = await fetch(
+        `https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`,
+        {
+          headers: SW_HEADERS,
+        }
+      );
       const data = await res.json();
       return new Response(JSON.stringify(data), {
         status: res.status,
@@ -309,6 +324,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
   // 6. GET /api/extract/stream (Edge Server-Sent Events via ReadableStream)
   if (pathname === '/api/extract/stream' && request.method === 'GET') {
     const courseId = url.searchParams.get('courseId')?.trim();
+    const platform = (url.searchParams.get('platform') || 'NT').toUpperCase();
     const deepFileDetails = url.searchParams.get('deepDetails') !== 'false';
 
     if (!courseId) {
@@ -329,6 +345,253 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
 
     const crawlTask = async () => {
       try {
+        if (platform === 'SW') {
+          await sendEvent('status', {
+            message: `Connecting to Selection Way API for Course ID #${courseId}...`,
+          });
+
+          const swApiUrl = `https://backend.multistreaming.site/api/courses/${encodeURIComponent(
+            courseId
+          )}/classes?populate=full`;
+          const swRes = await fetch(swApiUrl, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+              Accept: 'application/json',
+            },
+          });
+
+          if (!swRes.ok) {
+            throw new Error(`Failed to fetch Selection Way course classes: HTTP ${swRes.status}`);
+          }
+
+          const swJson: any = await swRes.json();
+          const swData = swJson.data || swJson;
+          const courseInfo = swData.course || {};
+          const topics = swData.classes || [];
+          const courseTitle = courseInfo.title || `SW Course #${courseId}`;
+
+          await sendEvent('status', {
+            message: `Found: "${courseTitle}" with ${topics.length} topics. Parsing classes...`,
+          });
+
+          const courseDetails = {
+            course_id: String(courseId),
+            title: courseTitle,
+            description: Array.isArray(courseInfo.description)
+              ? courseInfo.description.join(' • ')
+              : courseInfo.description || '',
+            thumbnail: courseInfo.bannerSquare || courseInfo.banner || '',
+            banner_image: courseInfo.banner || '',
+            image: courseInfo.banner || '',
+            price: courseInfo.price ? String(courseInfo.price) : undefined,
+            offer_price: courseInfo.discountPrice ? String(courseInfo.discountPrice) : undefined,
+          };
+
+          let totalFoldersCount = topics.length;
+          let totalFilesCount = 0;
+          let totalVideosCount = 0;
+          let totalNotesCount = 0;
+          let totalDppsCount = 0;
+          let totalTestsCount = 0;
+          let totalLinksCount = 0;
+          let totalDurationSeconds = 0;
+
+          const allFilesList: any[] = [];
+          const treeNodes: any[] = [];
+
+          topics.forEach((topic: any, topicIndex: number) => {
+            const topicName = (topic.topicName || `Topic ${topicIndex + 1}`).trim();
+            const topicId = topic.topicId || `topic_${topicIndex + 1}`;
+            const topicFiles: any[] = [];
+
+            const classesList: any[] = topic.classes || [];
+            classesList.forEach((cls: any, classIndex: number) => {
+              const classId = cls._id || cls.classId || `cls_${topicIndex}_${classIndex}`;
+              const classTitle = (cls.title || `Class ${classIndex + 1}`).trim();
+              const teacher = cls.teacherName ? ` (${cls.teacherName})` : '';
+              const fullVideoTitle = `${classTitle}${teacher}`;
+
+              const rawDuration =
+                typeof cls.duration === 'number' ? cls.duration : parseFloat(cls.duration || '0');
+              const durationSeconds = !isNaN(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : 0;
+              totalDurationSeconds += durationSeconds;
+
+              const streamUrl = cls.class_link || '';
+              const downloadUrls = Array.isArray(cls.mp4Recordings)
+                ? cls.mp4Recordings
+                    .filter((r: any) => r && r.url)
+                    .map((r: any) => ({
+                      quality: r.quality || r.title || 'Standard',
+                      url: r.url,
+                    }))
+                : [];
+
+              // 1. Video file item
+              if (streamUrl || cls.isLive !== undefined || cls.isRecorded !== undefined) {
+                totalFilesCount++;
+                totalVideosCount++;
+                const videoItem = {
+                  id: String(classId),
+                  title: fullVideoTitle,
+                  className: classTitle,
+                  type: 'video',
+                  rawFileType: 2,
+                  duration: formatDuration(durationSeconds),
+                  durationSeconds,
+                  streamUrl,
+                  downloadUrls,
+                  path: topicName,
+                };
+                topicFiles.push(videoItem);
+                allFilesList.push(videoItem);
+              }
+
+              // 2. Class PDFs (Notes / DPPs)
+              if (Array.isArray(cls.classPdf)) {
+                cls.classPdf.forEach((pdf: any, pIdx: number) => {
+                  if (!pdf || !pdf.url) return;
+                  totalFilesCount++;
+                  const pdfName = (pdf.name || `${classTitle} PDF ${pIdx + 1}`).trim();
+                  const isDpp =
+                    pdfName.toLowerCase().includes('dpp') ||
+                    pdfName.toLowerCase().includes('sheet') ||
+                    pdfName.toLowerCase().includes('worksheet') ||
+                    pdfName.toLowerCase().includes('assignment');
+
+                  if (isDpp) totalDppsCount++;
+                  else totalNotesCount++;
+
+                  const pdfItem = {
+                    id: `${classId}_pdf_${pIdx}`,
+                    title: pdfName,
+                    className: classTitle,
+                    type: isDpp ? 'dpp' : 'notes',
+                    rawFileType: 1,
+                    pdfUrl: pdf.url,
+                    streamUrl: pdf.url,
+                    path: topicName,
+                  };
+                  topicFiles.push(pdfItem);
+                  allFilesList.push(pdfItem);
+                });
+              }
+
+              // 3. Class Tests
+              if (Array.isArray(cls.classTest)) {
+                cls.classTest.forEach((test: any, tIdx: number) => {
+                  if (!test) return;
+                  const testUrl = test.url || test.link || '';
+                  if (!testUrl && !test.name) return;
+                  totalFilesCount++;
+                  totalTestsCount++;
+                  const testName = (test.name || `${classTitle} Test ${tIdx + 1}`).trim();
+
+                  const testItem = {
+                    id: `${classId}_test_${tIdx}`,
+                    title: testName,
+                    className: classTitle,
+                    type: 'test',
+                    pdfUrl: testUrl,
+                    streamUrl: testUrl,
+                    path: topicName,
+                  };
+                  topicFiles.push(testItem);
+                  allFilesList.push(testItem);
+                });
+              }
+            });
+
+            treeNodes.push({
+              id: String(topicId),
+              title: topicName,
+              path: [],
+              folders: [],
+              files: topicFiles,
+            });
+          });
+
+          const stats = {
+            totalFolders: totalFoldersCount,
+            totalFiles: totalFilesCount,
+            totalVideos: totalVideosCount,
+            totalNotes: totalNotesCount,
+            totalDpps: totalDppsCount,
+            totalTests: totalTestsCount,
+            totalLinks: totalLinksCount,
+            totalDurationFormatted: formatDuration(totalDurationSeconds),
+            totalDurationSeconds,
+          };
+
+          const courseDataForSW = {
+            course: {
+              id: courseId,
+              title: courseTitle,
+              isLive: courseInfo.isLive,
+              ...courseInfo,
+            },
+            classes: topics,
+          };
+
+          const txtReport = generateSWTxt(courseDataForSW);
+          const m3uPlaylist = generateSWM3U(courseDataForSW, { streamType: 'hls' });
+          const bashScript = generateSWBash(courseDataForSW, { preferredQuality: '720p' });
+          const powerShellScript = generateSWPowerShell(courseDataForSW, { preferredQuality: '720p' });
+
+          // Bot Format TXT
+          let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
+          allFilesList.forEach((file) => {
+            const isVideo = file.type === 'video';
+            const targetUrl = isVideo ? file.streamUrl : file.pdfUrl || file.streamUrl;
+            if (!targetUrl) return;
+
+            let cat = 'FILE';
+            if (file.type === 'video') cat = 'VIDEO';
+            else if (file.type === 'notes' || file.type === 'dpp') cat = 'PDF';
+            else if (file.type === 'test') cat = 'TEST';
+
+            let titleDisplay = file.title;
+            if (file.type === 'dpp' && !titleDisplay.toLowerCase().startsWith('dpp')) {
+              titleDisplay = `DPP - ${titleDisplay}`;
+            }
+
+            let durationSuffix = file.duration && file.duration !== 'N/A' ? ` (${file.duration})` : '';
+            let idSuffix = file.id ? ` (id: ${file.id})` : '';
+
+            botFormatTxt += `[${cat}] ${titleDisplay}${idSuffix}${durationSuffix}: ${targetUrl}\n`;
+          });
+
+          let directLinksTxt = `# BATCH CONTENT: ${courseTitle}\n# Course ID: ${courseId}\n\n`;
+          allFilesList.forEach((file) => {
+            const target = file.streamUrl || file.pdfUrl || '';
+            if (target) {
+              directLinksTxt += `[${file.type.toUpperCase()}] ${file.title}: ${target}\nFolder: ${file.path}\n\n`;
+            }
+          });
+
+          const finalResult = {
+            platform: 'SW',
+            courseId,
+            courseDetails,
+            extractedAt: new Date().toISOString(),
+            stats,
+            rootFolders: treeNodes,
+            allFiles: allFilesList,
+            txtReport,
+            botFormatTxt,
+            directLinksTxt,
+            rawUrlsTxt: allFilesList.map((f) => f.streamUrl || f.pdfUrl).filter(Boolean).join('\n'),
+            m3uPlaylist,
+            bashScript,
+            powerShellScript,
+            rawSWData: swData,
+          };
+
+          await sendEvent('complete', finalResult);
+          return;
+        }
+
+        // Platform: NT (NextToppers)
         await sendEvent('status', { message: `Connecting to batch API for Course ID #${courseId}...` });
 
         // Step 1: Course Details
@@ -593,6 +856,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         });
 
         const finalResult = {
+          platform: 'NT',
           courseId,
           courseDetails,
           extractedAt: new Date().toISOString(),

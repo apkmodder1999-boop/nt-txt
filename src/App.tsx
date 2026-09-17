@@ -314,6 +314,20 @@ export default function App() {
         setTotalNotes(finalData.stats?.totalNotes || 0);
         setTotalDpps(finalData.stats?.totalDpps || 0);
 
+        // If server returned 0 files, trigger client-side extraction fallback immediately
+        if ((finalData.stats?.totalFiles || 0) === 0) {
+          addLog('warning', `Server stream returned 0 files for ${platform}. Attempting direct browser extraction...`);
+          es.close();
+          eventSourceRef.current = null;
+          if (platform === 'SW') {
+            runClientSideSWExtraction(targetCourseId);
+            return;
+          } else {
+            runClientSideFallback(targetCourseId, deep);
+            return;
+          }
+        }
+
         const courseTitle = finalData.courseDetails?.title || `${platform}_Course_${targetCourseId}`;
         const filename = `${courseTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}.txt`;
 
@@ -321,9 +335,13 @@ export default function App() {
           `Done [${platform}] — ${courseTitle}: ${finalData.stats?.totalFolders} folders, ${finalData.stats?.totalFiles} items extracted.`
         );
 
-        // Auto-download TXT (Bot format)
-        if (finalData.botFormatTxt || finalData.txtReport) {
-          const contentToSave = finalData.botFormatTxt || finalData.txtReport || '';
+        // Auto-download TXT (Selection Way TXT format for SW, Bot format for NT) only when items exist
+        const contentToSave =
+          platform === 'SW'
+            ? finalData.txtReport || finalData.botFormatTxt || ''
+            : finalData.botFormatTxt || finalData.txtReport || '';
+
+        if ((finalData.stats?.totalFiles || 0) > 0 && contentToSave) {
           const blob = new Blob(['\uFEFF' + contentToSave], {
             type: 'text/plain;charset=utf-8',
           });
@@ -335,6 +353,8 @@ export default function App() {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
+        } else if ((finalData.stats?.totalFiles || 0) === 0) {
+          setError('No downloadable content found for this course. Please verify the Course ID.');
         }
 
         es.close();
@@ -388,8 +408,8 @@ export default function App() {
         `Done [SW] — ${courseTitle}: ${finalResult.stats?.totalFolders} folders, ${finalResult.stats?.totalFiles} items extracted.`
       );
 
-      if (finalResult.botFormatTxt || finalResult.txtReport) {
-        const contentToSave = finalResult.botFormatTxt || finalResult.txtReport || '';
+      if ((finalResult.stats?.totalFiles || 0) > 0 && (finalResult.txtReport || finalResult.botFormatTxt)) {
+        const contentToSave = finalResult.txtReport || finalResult.botFormatTxt || '';
         const blob = new Blob(['\uFEFF' + contentToSave], {
           type: 'text/plain;charset=utf-8',
         });
@@ -401,6 +421,8 @@ export default function App() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+      } else if ((finalResult.stats?.totalFiles || 0) === 0) {
+        setError('No items found in this course. Please verify the Course ID and ensure classes are published.');
       }
     } catch (err: any) {
       console.error('Client SW extract error:', err);
@@ -596,18 +618,22 @@ export default function App() {
         `Done — ${courseTitle}: ${foldersCount} folders, ${filesCount} items saved.`
       );
 
-      // Auto download
-      const blob = new Blob(['\uFEFF' + (generated.botFormatTxt || generated.txtReport)], {
-        type: 'text/plain;charset=utf-8',
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Auto download only when files were extracted
+      if (filesCount > 0 && (generated.botFormatTxt || generated.txtReport)) {
+        const blob = new Blob(['\uFEFF' + (generated.botFormatTxt || generated.txtReport)], {
+          type: 'text/plain;charset=utf-8',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else if (filesCount === 0) {
+        setError('No files or videos found for this Course ID. Please verify the Course ID.');
+      }
     } catch (err: any) {
       console.error('Client crawl error:', err);
       setError(`Extraction failed: ${err.message || 'Unknown error'}`);

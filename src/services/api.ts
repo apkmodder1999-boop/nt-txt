@@ -7,6 +7,12 @@ import {
   ExtractionResult,
   SWCourseItem,
 } from '../types';
+import {
+  generateSWTxt,
+  generateSWM3U,
+  generateSWBash,
+  generateSWPowerShell,
+} from './swGenerators';
 
 export const SW_API_COURSES = 'https://backend.multistreaming.site/api/courses';
 export const SW_API_COURSE_CLASSES = (courseId: string) =>
@@ -629,13 +635,29 @@ export function convertSWClassesToExtractionResult(
     totalDurationSeconds,
   };
 
-  const { txtReport, directLinksTxt, botFormatTxt, rawUrlsTxt, m3uPlaylist } = generateTxtFiles(
+  const { directLinksTxt, botFormatTxt, rawUrlsTxt } = generateTxtFiles(
     courseId,
     courseDetails,
     rootFolders,
     allFiles,
     stats
   );
+
+  // Generate Selection Way export formats
+  const courseDataForSW = {
+    course: {
+      id: courseId,
+      title: courseTitle,
+      isLive: courseInfo.isLive,
+      ...courseInfo,
+    },
+    classes: topics,
+  };
+
+  const txtReport = generateSWTxt(courseDataForSW);
+  const m3uPlaylist = generateSWM3U(courseDataForSW, { streamType: 'hls' });
+  const bashScript = generateSWBash(courseDataForSW, { preferredQuality: '720p' });
+  const powerShellScript = generateSWPowerShell(courseDataForSW, { preferredQuality: '720p' });
 
   return {
     platform: 'SW',
@@ -650,6 +672,9 @@ export function convertSWClassesToExtractionResult(
     botFormatTxt,
     rawUrlsTxt,
     m3uPlaylist,
+    bashScript,
+    powerShellScript,
+    rawSWData: swData,
   };
 }
 

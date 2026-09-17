@@ -116,6 +116,9 @@ export interface ExtractionResult {
   botFormatTxt?: string;
   rawUrlsTxt: string;
   m3uPlaylist: string;
+  bashScript?: string;
+  powerShellScript?: string;
+  rawSWData?: any;
 }
 
 export interface CrawlLog {

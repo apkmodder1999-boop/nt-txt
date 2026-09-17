@@ -2,12 +2,18 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
+import {
+  generateSWTxt,
+  generateSWM3U,
+  generateSWBash,
+  generateSWPowerShell,
+} from './src/services/swGenerators';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -292,6 +298,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
     const allFilesList: any[] = [];
     const treeNodes: any[] = [];
 
+    let rawSWData: any = null;
+
     if (platform === 'SW') {
       sendEvent('status', { message: `Connecting to SW API for Course ID #${courseId}...` });
       const swRes = await fetch(
@@ -310,6 +318,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
 
       const swJson = await swRes.json();
       const swData = swJson.data || swJson;
+      rawSWData = swData;
       const courseInfo = swData.course || {};
       const courseTitle = courseInfo.title || `SW Course #${courseId}`;
       const topics: any[] = swData.classes || [];
@@ -1003,6 +1012,25 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
       botFormatTxt += `[${cat}] ${titleDisplay}${idSuffix}${durationSuffix}: ${targetUrl}\n`;
     });
 
+    let bashScript = '';
+    let powerShellScript = '';
+
+    if (platform === 'SW' && rawSWData) {
+      const courseDataForSW = {
+        course: {
+          id: courseId,
+          title: courseTitle,
+          isLive: courseDetails?.isLive,
+          ...courseDetails,
+        },
+        classes: rawSWData.classes || [],
+      };
+      txt = generateSWTxt(courseDataForSW);
+      m3u = generateSWM3U(courseDataForSW, { streamType: 'hls' });
+      bashScript = generateSWBash(courseDataForSW, { preferredQuality: '720p' });
+      powerShellScript = generateSWPowerShell(courseDataForSW, { preferredQuality: '720p' });
+    }
+
     const finalResult = {
       platform,
       courseId,
@@ -1026,6 +1054,9 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
       botFormatTxt,
       rawUrlsTxt,
       m3uPlaylist: m3u,
+      bashScript,
+      powerShellScript,
+      rawSWData,
     };
 
     sendEvent('complete', finalResult);
