@@ -565,8 +565,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
           else if (category === 'test') totalTestsCount++;
           else totalLinksCount++;
 
-          const streamUrl = fileData.file_url || '';
-          const downloadUrls = parseDownloadUrls(fileData.download_urls);
+          const rawUrl = fileData.file_url || '';
+          const streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
           const duration = fileData.duration || 0;
           if (typeof duration === 'number') {
             totalDurationSeconds += duration;
@@ -582,7 +582,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
             durationSeconds: duration,
             streamUrl,
             pdfUrl: '',
-            downloadUrls,
+            downloadUrls: [],
             shareUrl: fileData.dynamic_link || '',
             isLocked: Boolean(fileData.is_locked),
             isDrm: Boolean(fileData.is_drm),
@@ -592,8 +592,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
           filesInFolder.push(fileEntry);
           allFilesList.push(fileEntry);
 
-          // If streamUrl is missing or link missing or it's a note/dpp/test (whose link is in video-details)
-          if (deepFileDetails && (!streamUrl || !fileEntry.shareUrl || category === 'notes' || category === 'dpp' || category === 'test')) {
+          // For NT, videos require video-details for .m3u8 stream URLs, and notes/dpp/test for PDF links
+          if (deepFileDetails && (!streamUrl || category === 'video' || category === 'notes' || category === 'dpp' || category === 'test')) {
             filesNeedingDetails.push(fileEntry);
           }
 
@@ -640,8 +640,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
         else if (category === 'test') totalTestsCount++;
         else totalLinksCount++;
 
-        const streamUrl = fileData.file_url || '';
-        const downloadUrls = parseDownloadUrls(fileData.download_urls);
+        const rawUrl = fileData.file_url || '';
+        const streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
         const duration = fileData.duration || 0;
         if (typeof duration === 'number') totalDurationSeconds += duration;
 
@@ -655,7 +655,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
           durationSeconds: duration,
           streamUrl,
           pdfUrl: '',
-          downloadUrls,
+          downloadUrls: [],
           shareUrl: fileData.dynamic_link || '',
           isLocked: Boolean(fileData.is_locked),
           isDrm: Boolean(fileData.is_drm),
@@ -663,7 +663,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
         };
         allFilesList.push(fileEntry);
 
-        if (deepFileDetails && (!streamUrl || category === 'notes' || category === 'dpp' || category === 'test')) {
+        if (deepFileDetails && (!streamUrl || category === 'video' || category === 'notes' || category === 'dpp' || category === 'test')) {
           filesNeedingDetails.push(fileEntry);
         }
       }
@@ -692,7 +692,10 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
                 const vdData = vdJson.data || {};
                 if (vdData.file_url) {
                   if (fileItem.type === 'video') {
-                    fileItem.streamUrl = vdData.file_url;
+                    // In NT, video URLs must strictly be stream URLs, never download links
+                    if (!vdData.file_url.includes('/download/')) {
+                      fileItem.streamUrl = vdData.file_url;
+                    }
                   } else {
                     fileItem.pdfUrl = vdData.file_url;
                     fileItem.streamUrl = vdData.file_url;
@@ -704,9 +707,6 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
                   fileItem.shareUrl = vdData.share_url;
                 } else if (vdData.link && !fileItem.shareUrl) {
                   fileItem.shareUrl = vdData.link;
-                }
-                if (vdData.download_urls && (!fileItem.downloadUrls || fileItem.downloadUrls.length === 0)) {
-                  fileItem.downloadUrls = parseDownloadUrls(vdData.download_urls);
                 }
                 if (vdData.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
                   const dNum = parseInt(String(vdData.duration), 10);

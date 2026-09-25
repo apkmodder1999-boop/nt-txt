@@ -702,16 +702,11 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               else if (fileType === 'test') totalTestsCount++;
               else totalLinksCount++;
 
-              let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+              let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
+              let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
               let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
                 ? (fileData.file_url || fileData.pdf_url || '')
                 : (fileData.pdf_url || item.pdf_url || item.document_url || '');
-
-              const parsedDownloads = parseDownloadUrls(fileData.download_urls || item.download_urls);
-              // If video streamUrl is empty, use highest quality direct download link from cloudfront
-              if (!streamUrl && parsedDownloads.length > 0) {
-                streamUrl = parsedDownloads[parsedDownloads.length - 1].url;
-              }
 
               const dynamicLink = fileData.dynamic_link || '';
               // If test, populate stream/pdf with dynamic test link if not already set
@@ -738,7 +733,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                 rawFileType: fileData.file_type || item.file_type,
                 streamUrl,
                 pdfUrl,
-                downloadUrls: parsedDownloads,
+                downloadUrls: [],
                 duration: formatDuration(durationSec),
                 durationSeconds: durationSec,
                 shareUrl: dynamicLink,
@@ -747,8 +742,8 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                 path: fullPath,
               };
 
-              // Only probe video-details if we still don't have a streamUrl or pdfUrl
-              if (deepFileDetails && (!streamUrl || (fileType === 'notes' && !pdfUrl) || (fileType === 'dpp' && !pdfUrl))) {
+              // Probe video-details for video .m3u8 stream URLs and document links
+              if (deepFileDetails && (!streamUrl || fileType === 'video' || (fileType === 'notes' && !pdfUrl) || (fileType === 'dpp' && !pdfUrl))) {
                 filesNeedingDetails.push({ fileObj, itemId: fid });
               }
 
@@ -796,7 +791,8 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
             else if (fileType === 'test') totalTestsCount++;
             else totalLinksCount++;
 
-            let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+            let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
+            let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
             let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
               ? (fileData.file_url || fileData.pdf_url || '')
               : (fileData.pdf_url || item.pdf_url || item.document_url || '');
@@ -819,7 +815,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               rawFileType: fileData.file_type || item.file_type,
               streamUrl,
               pdfUrl,
-              downloadUrls: parseDownloadUrls(fileData.download_urls || item.download_urls),
+              downloadUrls: [],
               duration: formatDuration(durationSec),
               durationSeconds: durationSec,
               shareUrl: fileData.dynamic_link || '',
@@ -828,7 +824,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               path: 'Root',
             };
 
-            if (deepFileDetails && (!streamUrl || !fileObj.shareUrl || fileType === 'notes' || fileType === 'dpp' || fileType === 'test' || fileType === 'video')) {
+            if (deepFileDetails && (!streamUrl || fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
               filesNeedingDetails.push({ fileObj, itemId: fid });
             }
 
@@ -842,7 +838,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           const toProbe = filesNeedingDetails.slice(0, maxProbes);
 
           await sendEvent('status', {
-            message: `Resolving direct links for ${toProbe.length} items (budgeted for Edge runtime)...`,
+            message: `Resolving stream URLs (.m3u8) & links for ${toProbe.length} items...`,
           });
 
           const CONCURRENCY = 6;
@@ -863,7 +859,10 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                     const vdData = vdJson.data || vdJson || {};
                     if (vdData.file_url) {
                       if (fileObj.type === 'video') {
-                        fileObj.streamUrl = vdData.file_url;
+                        // In NT, video links must strictly be stream URLs (.m3u8), never download links
+                        if (!vdData.file_url.includes('/download/')) {
+                          fileObj.streamUrl = vdData.file_url;
+                        }
                       } else {
                         fileObj.pdfUrl = vdData.file_url;
                         fileObj.streamUrl = vdData.file_url;
@@ -871,9 +870,6 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                     }
                     if (vdData.dynamic_link) {
                       fileObj.shareUrl = vdData.dynamic_link;
-                    }
-                    if (vdData.download_urls && (!fileObj.downloadUrls || fileObj.downloadUrls.length === 0)) {
-                      fileObj.downloadUrls = parseDownloadUrls(vdData.download_urls);
                     }
                     if (vdData.duration && (!fileObj.durationSeconds || fileObj.durationSeconds === 0)) {
                       const dNum = parseInt(String(vdData.duration), 10);

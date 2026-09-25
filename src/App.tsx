@@ -300,11 +300,75 @@ export default function App() {
       }
     });
 
-    es.addEventListener('complete', (e: MessageEvent) => {
+    es.addEventListener('complete', async (e: MessageEvent) => {
       try {
         hasCompleted = true;
         const finalData: ExtractionResult = JSON.parse(e.data);
         finalData.platform = platform;
+
+        // For NT: strictly sanitize to ensure ONLY & ONLY stream URLs, and zero download links
+        if (platform === 'NT' && finalData.allFiles) {
+          finalData.allFiles.forEach((f) => {
+            if (f.streamUrl && f.streamUrl.includes('/download/')) {
+              f.streamUrl = '';
+            }
+            f.downloadUrls = [];
+          });
+
+          // Check if any videos or documents are missing stream URLs or PDF links
+          const missingItems = finalData.allFiles.filter(
+            (f) => (f.type === 'video' && !f.streamUrl) || ((f.type === 'notes' || f.type === 'dpp') && !f.pdfUrl)
+          );
+
+          if (deep && missingItems.length > 0) {
+            addLog('info', `Resolving ${missingItems.length} stream URLs (.m3u8) & links in browser...`);
+            const BATCH = 10;
+            for (let i = 0; i < missingItems.length; i += BATCH) {
+              const chunk = missingItems.slice(i, i + BATCH);
+              await Promise.all(
+                chunk.map(async (fileItem) => {
+                  try {
+                    const vd = await fetchVideoDetails(targetCourseId, fileItem.id);
+                    if (vd) {
+                      const resUrl = vd.file_url || vd.stream_url || '';
+                      if (fileItem.type === 'video') {
+                        if (resUrl && !resUrl.includes('/download/')) {
+                          fileItem.streamUrl = resUrl;
+                        }
+                      } else {
+                        fileItem.pdfUrl = resUrl;
+                        fileItem.streamUrl = resUrl;
+                      }
+                      if (vd.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
+                        const d = typeof vd.duration === 'string' ? parseInt(vd.duration, 10) : vd.duration;
+                        if (!isNaN(d) && d > 0) {
+                          fileItem.durationSeconds = d;
+                          fileItem.duration = formatDuration(d);
+                        }
+                      }
+                    }
+                  } catch {
+                    // Ignore single resolution failure
+                  }
+                })
+              );
+            }
+
+            const regenerated = generateTxtFiles(
+              targetCourseId,
+              finalData.courseDetails,
+              finalData.rootFolders,
+              finalData.allFiles,
+              finalData.stats
+            );
+            finalData.txtReport = regenerated.txtReport;
+            finalData.botFormatTxt = regenerated.botFormatTxt;
+            finalData.directLinksTxt = regenerated.directLinksTxt;
+            finalData.rawUrlsTxt = regenerated.rawUrlsTxt;
+            finalData.m3uPlaylist = regenerated.m3uPlaylist;
+          }
+        }
+
         setResult(finalData);
         setProgressPercent(100);
         setIsExtracting(false);
@@ -449,6 +513,7 @@ export default function App() {
       let linksCount = 0;
       let durationSum = 0;
       const allFilesList: ExtractedFileItem[] = [];
+      const filesNeedingDetails: ExtractedFileItem[] = [];
 
       async function crawlSubFolder(
         folderId: string | number,
@@ -490,15 +555,12 @@ export default function App() {
             const fid = item.entity_id || fileData.id || item.id || `file_${filesCount}`;
             const fileType = classifyFile(itemTitle, folderPath, fileData);
 
-            let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+            // In NT, video links must strictly be stream URLs, never download links
+            const rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
+            let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
             let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
               ? (fileData.file_url || fileData.pdf_url || '')
               : (fileData.pdf_url || item.pdf_url || item.document_url || '');
-
-            let parsedDownloads = parseDownloadUrls(fileData.download_urls || item.download_urls);
-            if (!streamUrl && parsedDownloads.length > 0) {
-              streamUrl = parsedDownloads[parsedDownloads.length - 1].url;
-            }
 
             const dynamicLink = fileData.dynamic_link || item.dynamic_link || '';
             if (fileType === 'test' && dynamicLink) {
@@ -513,38 +575,6 @@ export default function App() {
               if (!isNaN(s) && s > 0) {
                 durationSec = s;
                 durationSum += s;
-              }
-            }
-
-            if (deep && (!streamUrl || (fileType === 'notes' && !pdfUrl) || (fileType === 'dpp' && !pdfUrl))) {
-              try {
-                const vidDetails = await fetchVideoDetails(targetCourseId, fid);
-                if (vidDetails) {
-                  if (vidDetails.file_url) {
-                    if (fileType === 'video') {
-                      streamUrl = vidDetails.file_url;
-                    } else {
-                      pdfUrl = vidDetails.file_url;
-                      streamUrl = vidDetails.file_url;
-                    }
-                  }
-                  if (vidDetails.stream_url && !streamUrl) streamUrl = vidDetails.stream_url;
-                  if (vidDetails.duration && durationSec === 0) {
-                    const d = typeof vidDetails.duration === 'string' ? parseInt(vidDetails.duration, 10) : vidDetails.duration;
-                    if (!isNaN(d) && d > 0) {
-                      durationSec = d;
-                      durationSum += d;
-                    }
-                  }
-                  if (vidDetails.download_urls && parsedDownloads.length === 0) {
-                    parsedDownloads = parseDownloadUrls(vidDetails.download_urls);
-                    if (!streamUrl && parsedDownloads.length > 0) {
-                      streamUrl = parsedDownloads[parsedDownloads.length - 1].url;
-                    }
-                  }
-                }
-              } catch (e) {
-                // Keep existing values
               }
             }
 
@@ -564,13 +594,21 @@ export default function App() {
               type: fileType,
               streamUrl,
               pdfUrl,
-              downloadUrls: parsedDownloads,
+              downloadUrls: [],
               duration: formatDuration(durationSec),
+              durationSeconds: durationSec,
               path: folderPath,
             };
 
             files.push(fileObj);
             allFilesList.push(fileObj);
+
+            // Collect items that need video-details for .m3u8 stream URLs or document links
+            if (deep && (fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
+              if (!streamUrl || (fileType !== 'video' && !pdfUrl)) {
+                filesNeedingDetails.push(fileObj);
+              }
+            }
           }
         }
 
@@ -604,7 +642,8 @@ export default function App() {
           else if (fileType === 'test') testsCount++;
           else linksCount++;
 
-          let streamUrl = fileData.file_url || fileData.stream_url || item.stream_url || item.url || item.link || '';
+          const rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
+          let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
           let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
             ? (fileData.file_url || fileData.pdf_url || '')
             : (fileData.pdf_url || item.pdf_url || item.document_url || '');
@@ -625,11 +664,58 @@ export default function App() {
             type: fileType,
             streamUrl,
             pdfUrl,
-            downloadUrls: parseDownloadUrls(fileData.download_urls || item.download_urls),
+            downloadUrls: [],
             duration: formatDuration(durationSec),
+            durationSeconds: durationSec,
             path: 'Root',
           };
           allFilesList.push(fileObj);
+
+          if (deep && (fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
+            if (!streamUrl || (fileType !== 'video' && !pdfUrl)) {
+              filesNeedingDetails.push(fileObj);
+            }
+          }
+        }
+      }
+
+      // Fast concurrent resolution of stream URLs & document links
+      if (deep && filesNeedingDetails.length > 0) {
+        addLog('info', `Resolving stream URLs (.m3u8) & links for ${filesNeedingDetails.length} items in browser...`);
+        const BATCH = 10;
+        for (let i = 0; i < filesNeedingDetails.length; i += BATCH) {
+          const chunk = filesNeedingDetails.slice(i, i + BATCH);
+          await Promise.all(
+            chunk.map(async (fileItem) => {
+              try {
+                const vidDetails = await fetchVideoDetails(targetCourseId, fileItem.id);
+                if (vidDetails) {
+                  const resUrl = vidDetails.file_url || vidDetails.stream_url || '';
+                  if (fileItem.type === 'video') {
+                    if (resUrl && !resUrl.includes('/download/')) {
+                      fileItem.streamUrl = resUrl;
+                    }
+                  } else {
+                    fileItem.pdfUrl = resUrl;
+                    fileItem.streamUrl = resUrl;
+                  }
+
+                  if (vidDetails.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
+                    const d = typeof vidDetails.duration === 'string' ? parseInt(vidDetails.duration, 10) : vidDetails.duration;
+                    if (!isNaN(d) && d > 0) {
+                      fileItem.durationSeconds = d;
+                      fileItem.duration = formatDuration(d);
+                      durationSum += d;
+                    }
+                  }
+                }
+              } catch {
+                // Ignore individual lookup errors
+              }
+            })
+          );
+          const resolvedCount = Math.min(i + BATCH, filesNeedingDetails.length);
+          setProgressPercent(Math.min(96, 50 + Math.round((resolvedCount / filesNeedingDetails.length) * 45)));
         }
       }
 
@@ -832,7 +918,7 @@ export default function App() {
               onChange={(e) => setDeepDetails(e.target.checked)}
               className="rounded border-input text-primary focus:ring-0"
             />
-            <span>Include direct stream URLs & PDF download links</span>
+            <span>Resolve video stream URLs (.m3u8) & PDF document links</span>
           </label>
           <span className="font-mono text-[11px]">
             Target: <strong className="text-foreground">{platform}</strong>
