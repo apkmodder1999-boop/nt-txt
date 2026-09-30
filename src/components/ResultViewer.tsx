@@ -163,7 +163,10 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, onReset }) =
 
     files.forEach((file) => {
       const isVideo = file.type === 'video';
-      const targetUrl = isVideo ? file.streamUrl : (file.pdfUrl || file.streamUrl);
+      // In NT: videos must strictly be direct .m3u8 stream URLs only, never download links
+      const targetUrl = isVideo
+        ? (file.streamUrl && file.streamUrl.includes('.m3u8') && !file.streamUrl.includes('/download/') ? file.streamUrl : '')
+        : (file.pdfUrl || (file.streamUrl && !file.streamUrl.includes('/download/') ? file.streamUrl : ''));
       if (!targetUrl) return;
 
       let cat = 'FILE';

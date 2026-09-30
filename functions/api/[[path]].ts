@@ -678,7 +678,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
             await sendEvent('log', { message: `Subrequest budget reached for folder "${folderTitle}" on Edge Worker.` });
           }
 
-          const subFolders: any[] = [];
+          const folderItems: any[] = [];
           const files: any[] = [];
 
           for (const item of items) {
@@ -687,8 +687,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
             const itemTitle = item.title || item.data?.title || item.name || 'Untitled';
 
             if (isFolder) {
-              const sub = await crawlFolder(entityId, itemTitle, currentPathArr);
-              subFolders.push(sub);
+              folderItems.push(item);
             } else {
               totalFilesCount++;
               const fileData = item.data || item;
@@ -703,7 +702,10 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               else totalLinksCount++;
 
               let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
-              let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
+              // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+              let streamUrl = (fileType === 'video')
+                ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
+                : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
               let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
                 ? (fileData.file_url || fileData.pdf_url || '')
                 : (fileData.pdf_url || item.pdf_url || item.document_url || '');
@@ -742,24 +744,25 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                 path: fullPath,
               };
 
-              // Probe video-details for video .m3u8 stream URLs and document links
+              // Probe video-details for video direct .m3u8 stream URLs and document links
               if (deepFileDetails && (!streamUrl || fileType === 'video' || (fileType === 'notes' && !pdfUrl) || (fileType === 'dpp' && !pdfUrl))) {
                 filesNeedingDetails.push({ fileObj, itemId: fid });
               }
 
               files.push(fileObj);
               allFilesList.push(fileObj);
-
-              if (totalFilesCount % 10 === 0) {
-                await sendEvent('progress', {
-                  folder: pathStr,
-                  totalFolders: totalFoldersCount,
-                  totalFiles: totalFilesCount,
-                  lastFile: fileObj.title,
-                });
-              }
             }
           }
+
+          const subFolders = await Promise.all(
+            folderItems.map((sub) =>
+              crawlFolder(
+                sub.entity_id || sub.data?.id || sub.id,
+                sub.title || sub.data?.title || sub.name || 'Untitled Folder',
+                currentPathArr
+              )
+            )
+          );
 
           return {
             id: String(folderId),
@@ -770,67 +773,78 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           };
         }
 
-        const treeNodes: any[] = [];
-        for (const item of rootItems) {
-          const isFolder = item.type === 'folder' || item.is_folder || item.item_type === 'folder';
-          const entityId = item.entity_id || item.data?.id || item.id;
-          const itemTitle = item.title || item.data?.title || item.name || 'Root Folder';
+        const rootFolderItems = rootItems.filter((i: any) => i.type === 'folder' || i.is_folder || i.item_type === 'folder');
+        const rootFileItems = rootItems.filter((i: any) => !(i.type === 'folder' || i.is_folder || i.item_type === 'folder'));
 
-          if (isFolder) {
-            const folderNode = await crawlFolder(entityId, itemTitle, []);
-            treeNodes.push(folderNode);
-          } else {
-            totalFilesCount++;
-            const fileData = item.data || item;
-            const fid = item.entity_id || fileData.id || item.id || `file_${totalFilesCount}`;
-            const fileType = classifyFile(itemTitle, 'Root', fileData);
+        for (const item of rootFileItems) {
+          totalFilesCount++;
+          const fileData = item.data || item;
+          const fid = item.entity_id || fileData.id || item.id || `file_${totalFilesCount}`;
+          const itemTitle = item.title || item.data?.title || item.name || 'Root File';
+          const fileType = classifyFile(itemTitle, 'Root', fileData);
 
-            if (fileType === 'video') totalVideosCount++;
-            else if (fileType === 'notes') totalNotesCount++;
-            else if (fileType === 'dpp') totalDppsCount++;
-            else if (fileType === 'test') totalTestsCount++;
-            else totalLinksCount++;
+          if (fileType === 'video') totalVideosCount++;
+          else if (fileType === 'notes') totalNotesCount++;
+          else if (fileType === 'dpp') totalDppsCount++;
+          else if (fileType === 'test') totalTestsCount++;
+          else totalLinksCount++;
 
-            let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
-            let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
-            let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
-              ? (fileData.file_url || fileData.pdf_url || '')
-              : (fileData.pdf_url || item.pdf_url || item.document_url || '');
+          let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
+          // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+          let streamUrl = (fileType === 'video')
+            ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
+            : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+          let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
+            ? (fileData.file_url || fileData.pdf_url || '')
+            : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
-            const rawDuration = fileData.duration || item.duration;
-            let durationSec = 0;
-            if (rawDuration) {
-              const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
-              if (!isNaN(s) && s > 0) {
-                durationSec = s;
-                totalDurationSeconds += s;
-              }
+          const rawDuration = fileData.duration || item.duration;
+          let durationSec = 0;
+          if (rawDuration) {
+            const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
+            if (!isNaN(s) && s > 0) {
+              durationSec = s;
+              totalDurationSeconds += s;
             }
+          }
 
-            const fileObj = {
-              id: String(fid),
-              title: itemTitle,
-              className: itemTitle,
-              type: fileType,
-              rawFileType: fileData.file_type || item.file_type,
-              streamUrl,
-              pdfUrl,
-              downloadUrls: [],
-              duration: formatDuration(durationSec),
-              durationSeconds: durationSec,
-              shareUrl: fileData.dynamic_link || '',
-              isLocked: Boolean(fileData.is_locked),
-              isDrm: Boolean(fileData.is_drm),
-              path: 'Root',
-            };
+          const fileObj = {
+            id: String(fid),
+            title: itemTitle,
+            className: itemTitle,
+            type: fileType,
+            rawFileType: fileData.file_type || item.file_type,
+            streamUrl,
+            pdfUrl,
+            downloadUrls: [],
+            duration: formatDuration(durationSec),
+            durationSeconds: durationSec,
+            shareUrl: fileData.dynamic_link || '',
+            isLocked: Boolean(fileData.is_locked),
+            isDrm: Boolean(fileData.is_drm),
+            path: 'Root',
+          };
 
-            if (deepFileDetails && (!streamUrl || fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
+          if (deepFileDetails) {
+            if (fileType === 'video' && (!fileObj.streamUrl || !fileObj.streamUrl.includes('.m3u8'))) {
+              filesNeedingDetails.push({ fileObj, itemId: fid });
+            } else if ((fileType === 'notes' || fileType === 'dpp' || fileType === 'test') && !fileObj.pdfUrl) {
               filesNeedingDetails.push({ fileObj, itemId: fid });
             }
-
-            allFilesList.push(fileObj);
           }
+
+          allFilesList.push(fileObj);
         }
+
+        const treeNodes = await Promise.all(
+          rootFolderItems.map((item: any) =>
+            crawlFolder(
+              item.entity_id || item.data?.id || item.id,
+              item.title || item.data?.title || item.name || 'Root Folder',
+              []
+            )
+          )
+        );
 
         // Deep file details (strictly budgeted to prevent Cloudflare subrequest crashes)
         if (deepFileDetails && filesNeedingDetails.length > 0 && remainingSubrequests > 2) {
@@ -838,10 +852,10 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           const toProbe = filesNeedingDetails.slice(0, maxProbes);
 
           await sendEvent('status', {
-            message: `Resolving stream URLs (.m3u8) & links for ${toProbe.length} items...`,
+            message: `Resolving direct .m3u8 stream URLs & links for ${toProbe.length} items...`,
           });
 
-          const CONCURRENCY = 6;
+          const CONCURRENCY = 20;
           for (let i = 0; i < toProbe.length; i += CONCURRENCY) {
             const chunk = toProbe.slice(i, i + CONCURRENCY);
             await Promise.all(
@@ -859,8 +873,8 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
                     const vdData = vdJson.data || vdJson || {};
                     if (vdData.file_url) {
                       if (fileObj.type === 'video') {
-                        // In NT, video links must strictly be stream URLs (.m3u8), never download links
-                        if (!vdData.file_url.includes('/download/')) {
+                        // In NT, video links must strictly be direct .m3u8 stream URLs only! Never download links!
+                        if (vdData.file_url.includes('.m3u8') && !vdData.file_url.includes('/download/')) {
                           fileObj.streamUrl = vdData.file_url;
                         }
                       } else {

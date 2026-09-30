@@ -306,23 +306,25 @@ export default function App() {
         const finalData: ExtractionResult = JSON.parse(e.data);
         finalData.platform = platform;
 
-        // For NT: strictly sanitize to ensure ONLY & ONLY stream URLs, and zero download links
+        // For NT: strictly sanitize to ensure ONLY & ONLY stream URLs (.m3u8), and zero download links
         if (platform === 'NT' && finalData.allFiles) {
           finalData.allFiles.forEach((f) => {
-            if (f.streamUrl && f.streamUrl.includes('/download/')) {
-              f.streamUrl = '';
+            if (f.type === 'video') {
+              if (!f.streamUrl || !f.streamUrl.includes('.m3u8') || f.streamUrl.includes('/download/')) {
+                f.streamUrl = '';
+              }
             }
             f.downloadUrls = [];
           });
 
-          // Check if any videos or documents are missing stream URLs or PDF links
+          // Check if any videos are missing .m3u8 stream URLs or documents missing PDF links
           const missingItems = finalData.allFiles.filter(
-            (f) => (f.type === 'video' && !f.streamUrl) || ((f.type === 'notes' || f.type === 'dpp') && !f.pdfUrl)
+            (f) => (f.type === 'video' && (!f.streamUrl || !f.streamUrl.includes('.m3u8'))) || ((f.type === 'notes' || f.type === 'dpp' || f.type === 'test') && !f.pdfUrl)
           );
 
           if (deep && missingItems.length > 0) {
-            addLog('info', `Resolving ${missingItems.length} stream URLs (.m3u8) & links in browser...`);
-            const BATCH = 10;
+            addLog('info', `Resolving ${missingItems.length} direct stream URLs (.m3u8) & links in browser...`);
+            const BATCH = 35;
             for (let i = 0; i < missingItems.length; i += BATCH) {
               const chunk = missingItems.slice(i, i + BATCH);
               await Promise.all(
@@ -332,7 +334,8 @@ export default function App() {
                     if (vd) {
                       const resUrl = vd.file_url || vd.stream_url || '';
                       if (fileItem.type === 'video') {
-                        if (resUrl && !resUrl.includes('/download/')) {
+                        // Strictly only .m3u8 direct stream URLs, never download links
+                        if (resUrl && resUrl.includes('.m3u8') && !resUrl.includes('/download/')) {
                           fileItem.streamUrl = resUrl;
                         }
                       } else {
@@ -533,7 +536,7 @@ export default function App() {
           return { id: String(folderId), title, path, folders: [], files: [] };
         }
 
-        const subFolders: ExtractedFolderNode[] = [];
+        const folderItems: any[] = [];
         const files: ExtractedFileItem[] = [];
 
         for (const item of items) {
@@ -542,11 +545,7 @@ export default function App() {
           const itemTitle = item.title || item.data?.title || item.name || 'Untitled';
 
           if (isFolder) {
-            const sub = await crawlSubFolder(entityId, itemTitle, [
-              ...path,
-              title,
-            ]);
-            subFolders.push(sub);
+            folderItems.push({ entityId, itemTitle });
           } else {
             filesCount++;
             setTotalFiles(filesCount);
@@ -555,9 +554,11 @@ export default function App() {
             const fid = item.entity_id || fileData.id || item.id || `file_${filesCount}`;
             const fileType = classifyFile(itemTitle, folderPath, fileData);
 
-            // In NT, video links must strictly be stream URLs, never download links
+            // In NT, video links must strictly be direct .m3u8 stream URLs only, never download links
             const rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
-            let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
+            let streamUrl = (fileType === 'video')
+              ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
+              : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
             let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
               ? (fileData.file_url || fileData.pdf_url || '')
               : (fileData.pdf_url || item.pdf_url || item.document_url || '');
@@ -604,85 +605,96 @@ export default function App() {
             allFilesList.push(fileObj);
 
             // Collect items that need video-details for .m3u8 stream URLs or document links
-            if (deep && (fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
-              if (!streamUrl || (fileType !== 'video' && !pdfUrl)) {
+            if (deep) {
+              if (fileType === 'video' && (!fileObj.streamUrl || !fileObj.streamUrl.includes('.m3u8'))) {
+                filesNeedingDetails.push(fileObj);
+              } else if ((fileType === 'notes' || fileType === 'dpp' || fileType === 'test') && !fileObj.pdfUrl) {
                 filesNeedingDetails.push(fileObj);
               }
             }
           }
         }
 
+        // Parallelize subfolder crawling for speed
+        const subFolders = await Promise.all(
+          folderItems.map((f) =>
+            crawlSubFolder(f.entityId, f.itemTitle, [...path, title])
+          )
+        );
+
         return { id: String(folderId), title, path, folders: subFolders, files };
       }
 
-      const rootFolders: ExtractedFolderNode[] = [];
+      const rootFolderItems = rootItems.filter((i: any) => i.type === 'folder' || i.is_folder || i.item_type === 'folder');
+      const rootFileItems = rootItems.filter((i: any) => !(i.type === 'folder' || i.is_folder || i.item_type === 'folder'));
 
-      for (const item of rootItems) {
-        const isFolder = item.type === 'folder' || item.is_folder || item.item_type === 'folder';
-        const entityId = item.entity_id || item.data?.id || item.id;
-        const itemTitle = item.title || item.data?.title || item.name || 'Root Folder';
+      for (const item of rootFileItems) {
+        filesCount++;
+        setTotalFiles(filesCount);
+        const fileData = item.data || item;
+        const fid = item.entity_id || fileData.id || item.id || `file_${filesCount}`;
+        const itemTitle = item.title || item.data?.title || item.name || 'Root File';
+        const fileType = classifyFile(itemTitle, 'Root', fileData);
 
-        if (isFolder) {
-          const folderNode = await crawlSubFolder(
-            entityId,
-            itemTitle,
-            []
-          );
-          rootFolders.push(folderNode);
-        } else {
-          filesCount++;
-          setTotalFiles(filesCount);
-          const fileData = item.data || item;
-          const fid = item.entity_id || fileData.id || item.id || `file_${filesCount}`;
-          const fileType = classifyFile(itemTitle, 'Root', fileData);
+        if (fileType === 'video') videosCount++;
+        else if (fileType === 'notes') notesCount++;
+        else if (fileType === 'dpp') dppsCount++;
+        else if (fileType === 'test') testsCount++;
+        else linksCount++;
 
-          if (fileType === 'video') videosCount++;
-          else if (fileType === 'notes') notesCount++;
-          else if (fileType === 'dpp') dppsCount++;
-          else if (fileType === 'test') testsCount++;
-          else linksCount++;
+        const rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
+        let streamUrl = (fileType === 'video')
+          ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
+          : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+        let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
+          ? (fileData.file_url || fileData.pdf_url || '')
+          : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
-          const rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
-          let streamUrl = (rawUrl && !rawUrl.includes('/download/')) ? rawUrl : '';
-          let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
-            ? (fileData.file_url || fileData.pdf_url || '')
-            : (fileData.pdf_url || item.pdf_url || item.document_url || '');
-
-          const rawDuration = fileData.duration || item.duration;
-          let durationSec = 0;
-          if (rawDuration) {
-            const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
-            if (!isNaN(s) && s > 0) {
-              durationSec = s;
-              durationSum += s;
-            }
+        const rawDuration = fileData.duration || item.duration;
+        let durationSec = 0;
+        if (rawDuration) {
+          const s = typeof rawDuration === 'string' ? parseInt(rawDuration, 10) : rawDuration;
+          if (!isNaN(s) && s > 0) {
+            durationSec = s;
+            durationSum += s;
           }
+        }
 
-          const fileObj: ExtractedFileItem = {
-            id: String(fid),
-            title: itemTitle,
-            type: fileType,
-            streamUrl,
-            pdfUrl,
-            downloadUrls: [],
-            duration: formatDuration(durationSec),
-            durationSeconds: durationSec,
-            path: 'Root',
-          };
-          allFilesList.push(fileObj);
+        const fileObj: ExtractedFileItem = {
+          id: String(fid),
+          title: itemTitle,
+          type: fileType,
+          streamUrl,
+          pdfUrl,
+          downloadUrls: [],
+          duration: formatDuration(durationSec),
+          durationSeconds: durationSec,
+          path: 'Root',
+        };
+        allFilesList.push(fileObj);
 
-          if (deep && (fileType === 'video' || fileType === 'notes' || fileType === 'dpp' || fileType === 'test')) {
-            if (!streamUrl || (fileType !== 'video' && !pdfUrl)) {
-              filesNeedingDetails.push(fileObj);
-            }
+        if (deep) {
+          if (fileType === 'video' && (!fileObj.streamUrl || !fileObj.streamUrl.includes('.m3u8'))) {
+            filesNeedingDetails.push(fileObj);
+          } else if ((fileType === 'notes' || fileType === 'dpp' || fileType === 'test') && !fileObj.pdfUrl) {
+            filesNeedingDetails.push(fileObj);
           }
         }
       }
 
+      // Parallelize root folders crawling
+      const rootFolders = await Promise.all(
+        rootFolderItems.map((rf: any) => {
+          const entityId = rf.entity_id || rf.data?.id || rf.id;
+          const itemTitle = rf.title || rf.data?.title || rf.name || 'Root Folder';
+          return crawlSubFolder(entityId, itemTitle, []);
+        })
+      );
+
       // Fast concurrent resolution of stream URLs & document links
       if (deep && filesNeedingDetails.length > 0) {
         addLog('info', `Resolving stream URLs (.m3u8) & links for ${filesNeedingDetails.length} items in browser...`);
-        const BATCH = 10;
+        const BATCH = 35;
         for (let i = 0; i < filesNeedingDetails.length; i += BATCH) {
           const chunk = filesNeedingDetails.slice(i, i + BATCH);
           await Promise.all(
@@ -692,7 +704,8 @@ export default function App() {
                 if (vidDetails) {
                   const resUrl = vidDetails.file_url || vidDetails.stream_url || '';
                   if (fileItem.type === 'video') {
-                    if (resUrl && !resUrl.includes('/download/')) {
+                    // Strictly only .m3u8 direct stream URLs, never download links
+                    if (resUrl && resUrl.includes('.m3u8') && !resUrl.includes('/download/')) {
                       fileItem.streamUrl = resUrl;
                     }
                   } else {

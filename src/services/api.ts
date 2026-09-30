@@ -283,7 +283,8 @@ export function generateTxtFiles(
     videoFiles.forEach((file) => {
       const durationStr =
         file.duration && file.duration !== 'N/A' ? `  (Duration: ${file.duration})` : '';
-      directLinksTxt += `[VIDEO] ${file.title}  (id: ${file.id})${durationStr}: ${file.streamUrl || 'N/A'}\n`;
+      const streamLink = (file.streamUrl && file.streamUrl.includes('.m3u8') && !file.streamUrl.includes('/download/')) ? file.streamUrl : 'N/A';
+      directLinksTxt += `[VIDEO] ${file.title}  (id: ${file.id})${durationStr}: ${streamLink}\n`;
       directLinksTxt += `Folder: ${file.path}\n\n`;
       directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
     });
@@ -344,7 +345,7 @@ export function generateTxtFiles(
 # Generated on: ${dateNow}\n\n`;
   rawUrlsTxt += `# --- STREAM VIDEOS (.M3U8) ---\n`;
   videoFiles.forEach((v) => {
-    if (v.streamUrl) rawUrlsTxt += `${v.streamUrl}\n`;
+    if (v.streamUrl && v.streamUrl.includes('.m3u8') && !v.streamUrl.includes('/download/')) rawUrlsTxt += `${v.streamUrl}\n`;
   });
   rawUrlsTxt += `\n# --- CLASS NOTES ---\n`;
   noteFiles.forEach((p) => {
@@ -436,16 +437,16 @@ export function generateTxtFiles(
         out += `${fileIndent}${tag} ${file.title}  (id: ${file.id})${durationText}\n`;
 
         if (file.type === 'video') {
-          if (file.streamUrl) {
+          if (file.streamUrl && file.streamUrl.includes('.m3u8') && !file.streamUrl.includes('/download/')) {
             out += `${detailIndent}Stream: ${file.streamUrl}\n`;
           }
         } else if (file.type === 'notes' || file.type === 'dpp') {
-          const docLink = file.pdfUrl || file.streamUrl;
+          const docLink = file.pdfUrl || (file.streamUrl && !file.streamUrl.includes('/download/') ? file.streamUrl : '');
           if (docLink) {
             out += `${detailIndent}Document: ${docLink}\n`;
           }
         } else {
-          const link = file.pdfUrl || file.streamUrl;
+          const link = file.pdfUrl || (file.streamUrl && !file.streamUrl.includes('/download/') ? file.streamUrl : '');
           if (link) {
             out += `${detailIndent}Document: ${link}\n`;
           }
@@ -461,10 +462,10 @@ export function generateTxtFiles(
     txt += renderHierarchicalDataTree(node, 0);
   }
 
-  // 4. M3U Playlist
+  // 4. M3U Playlist (Strictly .m3u8 stream URLs only)
   let m3u = `#EXTM3U\n# Course: ${courseTitle} (ID: ${courseId})\n\n`;
   videoFiles
-    .filter((f) => f.streamUrl)
+    .filter((f) => f.streamUrl && f.streamUrl.includes('.m3u8') && !f.streamUrl.includes('/download/'))
     .forEach((v) => {
       m3u += `#EXTINF:-1 group-title="${v.path.replace(/"/g, '')}",Class: ${v.title.replace(/,/g, ' ')}\n${v.streamUrl}\n`;
     });
@@ -473,7 +474,10 @@ export function generateTxtFiles(
   let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
   allFiles.forEach((file) => {
     const isVideo = file.type === 'video';
-    const targetUrl = isVideo ? file.streamUrl : (file.pdfUrl || file.streamUrl);
+    // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+    const targetUrl = isVideo
+      ? (file.streamUrl && file.streamUrl.includes('.m3u8') && !file.streamUrl.includes('/download/') ? file.streamUrl : '')
+      : (file.pdfUrl || (file.streamUrl && !file.streamUrl.includes('/download/') ? file.streamUrl : ''));
     if (!targetUrl) return;
 
     let cat = 'FILE';
