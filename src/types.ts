@@ -75,6 +75,7 @@ export interface ExtractedFileItem {
   duration?: string;
   durationSeconds?: number;
   streamUrl?: string;
+  vdcId?: string;
   downloadUrls?: DownloadUrlItem[];
   pdfUrl?: string;
   shareUrl?: string;

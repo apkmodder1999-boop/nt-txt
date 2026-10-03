@@ -11,14 +11,12 @@ interface Env {
   [key: string]: any;
 }
 
-const DEFAULT_REMOTE_URL = 'https://learnjh_api.learnjhapi.workers.dev/api/nexttoppers';
+const DEFAULT_REMOTE_URL = 'https://nt.learn-topper.workers.dev';
 
 const DEFAULT_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
   Accept: 'application/json, text/plain, */*',
-  Referer: 'https://learnjh.vercel.app/',
-  Origin: 'https://learnjh.vercel.app',
 };
 
 const CORS_HEADERS = {
@@ -134,7 +132,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
   // 1. GET /api/batches
   if (pathname === '/api/batches' && request.method === 'GET') {
     try {
-      const res = await fetch(`${remoteBase}/batches`, {
+      const res = await fetch(`${remoteBase}/courses`, {
         method: 'GET',
         headers: DEFAULT_HEADERS,
       });
@@ -144,8 +142,21 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
+      const data: any = await res.json();
+      const courseList = data.data?.find((l: any) => l.layout_type === 'course_list_layout')?.list || [];
+      const formatted = [
+        {
+          section: 'Next Toppers Courses',
+          batches: courseList.map((c: any) => ({
+            id: c.id,
+            name: c.title || c.name || `Course ${c.id}`,
+            badge: c.is_trending || (c.is_new ? 'New' : (c.offer_price ? `₹${c.offer_price}` : null)),
+            thumbnail: c.thumbnail,
+            actions: ['Explore'],
+          })),
+        },
+      ];
+      return new Response(JSON.stringify(formatted), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
@@ -168,14 +179,32 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
-      const res = await fetch(`${remoteBase}/course-details`, {
-        method: 'POST',
-        headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId: String(courseId) }),
+      const res = await fetch(`${remoteBase}/course-details?courseId=${encodeURIComponent(String(courseId))}`, {
+        method: 'GET',
+        headers: DEFAULT_HEADERS,
       });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
-        status: res.status,
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: `Upstream error: ${res.statusText}` }), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
+      }
+      const data: any = await res.json();
+      const overview = data.data?.find((d: any) => d.type === 'overview' || d.title === 'Overview');
+      const details = overview?.data?.find((d: any) => d.layout_type === 'details')?.layout_data?.[0] || {
+        id: courseId,
+        course_id: String(courseId),
+        title: `Course #${courseId}`,
+      };
+      return new Response(JSON.stringify({
+        success: true,
+        data: {
+          ...details,
+          course_id: String(details.id || courseId),
+          title: details.title || `Course #${courseId}`,
+        },
+      }), {
+        status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     } catch (err: any) {
@@ -197,14 +226,19 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
-      const res = await fetch(`${remoteBase}/content`, {
-        method: 'POST',
-        headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId: String(courseId) }),
+      const res = await fetch(`${remoteBase}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=root`, {
+        method: 'GET',
+        headers: DEFAULT_HEADERS,
       });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
-        status: res.status,
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: `Upstream error: ${res.statusText}` }), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
+      }
+      const data: any = await res.json();
+      return new Response(JSON.stringify({ success: true, data: data.data || [] }), {
+        status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     } catch (err: any) {
@@ -226,14 +260,20 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
-      const res = await fetch(`${remoteBase}/content/folder`, {
-        method: 'POST',
-        headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId: String(courseId), folderId: String(folderId) }),
+      const targetFolder = (!folderId || folderId === '0' || folderId === 0) ? 'root' : String(folderId);
+      const res = await fetch(`${remoteBase}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=${encodeURIComponent(targetFolder)}`, {
+        method: 'GET',
+        headers: DEFAULT_HEADERS,
       });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
-        status: res.status,
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: `Upstream error: ${res.statusText}` }), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
+      }
+      const data: any = await res.json();
+      return new Response(JSON.stringify({ success: true, data: data.data || [] }), {
+        status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     } catch (err: any) {
@@ -248,21 +288,36 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
   if (pathname === '/api/video-details' && request.method === 'POST') {
     try {
       const body: any = await request.json();
-      const { courseId, contentId } = body;
-      if (!courseId || !contentId) {
-        return new Response(JSON.stringify({ error: 'courseId and contentId are required' }), {
+      const { courseId, contentId, vdcId } = body;
+      const targetVdc = vdcId || contentId;
+      if (!targetVdc) {
+        return new Response(JSON.stringify({ error: 'vdcId or contentId is required' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
-      const res = await fetch(`${remoteBase}/video-details`, {
-        method: 'POST',
-        headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId: String(courseId), contentId: String(contentId) }),
+      const res = await fetch(`${remoteBase}/get-url?vdcid=${encodeURIComponent(String(targetVdc))}`, {
+        method: 'GET',
+        headers: DEFAULT_HEADERS,
       });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
-        status: res.status,
+      if (res.ok) {
+        const data: any = await res.json();
+        if (data.success && data.url) {
+          return new Response(JSON.stringify({
+            success: true,
+            data: {
+              file_url: data.url,
+              stream_url: data.url,
+              directUrl: data.directUrl,
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+          });
+        }
+      }
+      return new Response(JSON.stringify({ success: true, data: null }), {
+        status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     } catch (err: any) {
@@ -597,14 +652,21 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         // Step 1: Course Details
         let courseDetails: any = null;
         try {
-          const cdRes = await fetch(`${remoteBase}/course-details`, {
-            method: 'POST',
-            headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ courseId }),
+          const cdRes = await fetch(`${remoteBase}/course-details?courseId=${encodeURIComponent(String(courseId))}`, {
+            method: 'GET',
+            headers: DEFAULT_HEADERS,
           });
           if (cdRes.ok) {
             const cdJson: any = await cdRes.json();
-            courseDetails = cdJson.data || cdJson;
+            const overview = cdJson.data?.find((d: any) => d.type === 'overview' || d.title === 'Overview');
+            const details = overview?.data?.find((d: any) => d.layout_type === 'details')?.layout_data?.[0];
+            if (details) {
+              courseDetails = {
+                ...details,
+                course_id: String(details.id || courseId),
+                title: details.title || `Course #${courseId}`,
+              };
+            }
           }
         } catch {
           // ignore
@@ -615,10 +677,9 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         });
 
         // Step 2: Content
-        const contentRes = await fetch(`${remoteBase}/content`, {
-          method: 'POST',
-          headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ courseId }),
+        const contentRes = await fetch(`${remoteBase}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=root`, {
+          method: 'GET',
+          headers: DEFAULT_HEADERS,
         });
 
         if (!contentRes.ok) {
@@ -661,10 +722,10 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           if (remainingSubrequests > 2) {
             remainingSubrequests--;
             try {
-              const folderRes = await fetch(`${remoteBase}/content/folder`, {
-                method: 'POST',
-                headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ courseId, folderId: String(folderId) }),
+              const targetFolder = (!folderId || folderId === '0' || folderId === 0) ? 'root' : String(folderId);
+              const folderRes = await fetch(`${remoteBase}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=${encodeURIComponent(targetFolder)}`, {
+                method: 'GET',
+                headers: DEFAULT_HEADERS,
                 signal: AbortSignal.timeout(6000),
               });
               if (folderRes.ok) {
@@ -729,6 +790,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
 
               const fileObj = {
                 id: String(fid),
+                vdcId: fileData.vdc_id || item.vdc_id || '',
                 title: itemTitle,
                 className: itemTitle,
                 type: fileType,
@@ -810,6 +872,7 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
 
           const fileObj = {
             id: String(fid),
+            vdcId: fileData.vdc_id || item.vdc_id || '',
             title: itemTitle,
             className: itemTitle,
             type: fileType,
@@ -862,35 +925,17 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               chunk.map(async ({ fileObj, itemId }) => {
                 remainingSubrequests--;
                 try {
-                  const vdRes = await fetch(`${remoteBase}/video-details`, {
-                    method: 'POST',
-                    headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ courseId, contentId: String(itemId) }),
-                    signal: AbortSignal.timeout(6000),
-                  });
-                  if (vdRes.ok) {
-                    const vdJson: any = await vdRes.json();
-                    const vdData = vdJson.data || vdJson || {};
-                    if (vdData.file_url) {
-                      if (fileObj.type === 'video') {
-                        // In NT, video links must strictly be direct .m3u8 stream URLs only! Never download links!
-                        if (vdData.file_url.includes('.m3u8') && !vdData.file_url.includes('/download/')) {
-                          fileObj.streamUrl = vdData.file_url;
-                        }
-                      } else {
-                        fileObj.pdfUrl = vdData.file_url;
-                        fileObj.streamUrl = vdData.file_url;
-                      }
-                    }
-                    if (vdData.dynamic_link) {
-                      fileObj.shareUrl = vdData.dynamic_link;
-                    }
-                    if (vdData.duration && (!fileObj.durationSeconds || fileObj.durationSeconds === 0)) {
-                      const dNum = parseInt(String(vdData.duration), 10);
-                      if (!isNaN(dNum) && dNum > 0) {
-                        fileObj.durationSeconds = dNum;
-                        fileObj.duration = formatDuration(dNum);
-                        totalDurationSeconds += dNum;
+                  const targetVdc = fileObj.vdcId || itemId;
+                  if (fileObj.type === 'video' && targetVdc) {
+                    const vdRes = await fetch(`${remoteBase}/get-url?vdcid=${encodeURIComponent(String(targetVdc))}`, {
+                      method: 'GET',
+                      headers: DEFAULT_HEADERS,
+                      signal: AbortSignal.timeout(6000),
+                    });
+                    if (vdRes.ok) {
+                      const vdJson: any = await vdRes.json();
+                      if (vdJson.success && vdJson.url && vdJson.url.includes('.m3u8')) {
+                        fileObj.streamUrl = vdJson.url;
                       }
                     }
                   }

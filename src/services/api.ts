@@ -125,11 +125,15 @@ export async function fetchFolderContent(courseId: string, folderId: string | nu
   }
 }
 
-export async function fetchVideoDetails(courseId: string, contentId: string | number): Promise<any> {
+export async function fetchVideoDetails(courseId: string, contentId: string | number, vdcId?: string): Promise<any> {
   const res = await fetch('/api/video-details', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ courseId, contentId: String(contentId) }),
+    body: JSON.stringify({
+      courseId,
+      contentId: String(contentId),
+      ...(vdcId ? { vdcId: String(vdcId) } : {}),
+    }),
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch video details: HTTP ${res.status}`);

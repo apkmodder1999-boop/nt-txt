@@ -591,6 +591,7 @@ export default function App() {
 
             const fileObj: ExtractedFileItem = {
               id: String(fid),
+              vdcId: fileData.vdc_id || item.vdc_id || undefined,
               title: itemTitle,
               type: fileType,
               streamUrl,
@@ -662,6 +663,7 @@ export default function App() {
 
         const fileObj: ExtractedFileItem = {
           id: String(fid),
+          vdcId: fileData.vdc_id || item.vdc_id || undefined,
           title: itemTitle,
           type: fileType,
           streamUrl,
@@ -700,7 +702,7 @@ export default function App() {
           await Promise.all(
             chunk.map(async (fileItem) => {
               try {
-                const vidDetails = await fetchVideoDetails(targetCourseId, fileItem.id);
+                const vidDetails = await fetchVideoDetails(targetCourseId, fileItem.id, fileItem.vdcId);
                 if (vidDetails) {
                   const resUrl = vidDetails.file_url || vidDetails.stream_url || '';
                   if (fileItem.type === 'video') {
@@ -937,6 +939,30 @@ export default function App() {
             Target: <strong className="text-foreground">{platform}</strong>
           </span>
         </div>
+
+        {/* NT API status line */}
+        {platform === 'NT' && (
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 px-3 py-2 text-xs rounded-lg bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/20 text-muted-foreground">
+            <div className="flex items-center gap-2 truncate">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+              <span className="text-[11px] truncate">
+                NT API:{' '}
+                <a
+                  href="https://nt.learn-topper.workers.dev/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                >
+                  https://nt.learn-topper.workers.dev/
+                </a>{' '}
+                <span className="text-muted-foreground/75">(HLS stream resolver active)</span>
+              </span>
+            </div>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium shrink-0">
+              Note: PDF links pending upstream API update
+            </span>
+          </div>
+        )}
 
         {/* Progress Card when extracting */}
         {isExtracting && (

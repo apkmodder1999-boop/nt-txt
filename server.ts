@@ -19,19 +19,17 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const SERVICE_BASE_URL =
-  process.env.REMOTE_SERVICE_URL || 'https://learnjh_api.learnjhapi.workers.dev/api/nexttoppers';
+  process.env.REMOTE_SERVICE_URL || 'https://nt.learn-topper.workers.dev';
 
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/plain, */*',
-  'Referer': 'https://learnjh.vercel.app/',
-  'Origin': 'https://learnjh.vercel.app',
 };
 
-// 1. All Batches
+// 1. All Batches / Courses
 app.get('/api/batches', async (req: Request, res: Response) => {
   try {
-    const response = await fetch(`${SERVICE_BASE_URL}/batches`, {
+    const response = await fetch(`${SERVICE_BASE_URL}/courses`, {
       method: 'GET',
       headers: DEFAULT_HEADERS,
     });
@@ -39,7 +37,20 @@ app.get('/api/batches', async (req: Request, res: Response) => {
       return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
     }
     const data = await response.json();
-    res.json(data);
+    const courseList = data.data?.find((l: any) => l.layout_type === 'course_list_layout')?.list || [];
+    const formatted = [
+      {
+        section: 'Next Toppers Courses',
+        batches: courseList.map((c: any) => ({
+          id: c.id,
+          name: c.title || c.name || `Course ${c.id}`,
+          badge: c.is_trending || (c.is_new ? 'New' : (c.offer_price ? `₹${c.offer_price}` : null)),
+          thumbnail: c.thumbnail,
+          actions: ['Explore'],
+        })),
+      },
+    ];
+    res.json(formatted);
   } catch (error: any) {
     console.error('Error fetching batches:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch batches' });
@@ -53,39 +64,50 @@ app.post('/api/course-details', async (req: Request, res: Response) => {
     if (!courseId) {
       return res.status(400).json({ error: 'courseId is required' });
     }
-    const response = await fetch(`${SERVICE_BASE_URL}/course-details`, {
-      method: 'POST',
-      headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courseId: String(courseId) }),
+    const response = await fetch(`${SERVICE_BASE_URL}/course-details?courseId=${encodeURIComponent(String(courseId))}`, {
+      method: 'GET',
+      headers: DEFAULT_HEADERS,
     });
     if (!response.ok) {
       return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
     }
     const data = await response.json();
-    res.json(data);
+    const overview = data.data?.find((d: any) => d.type === 'overview' || d.title === 'Overview');
+    const details = overview?.data?.find((d: any) => d.layout_type === 'details')?.layout_data?.[0] || {
+      id: courseId,
+      course_id: String(courseId),
+      title: `Course #${courseId}`,
+    };
+    res.json({
+      success: true,
+      data: {
+        ...details,
+        course_id: String(details.id || courseId),
+        title: details.title || `Course #${courseId}`,
+      },
+    });
   } catch (error: any) {
     console.error('Error fetching course-details:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch course details' });
   }
 });
 
-// 3. Batch Content
+// 3. Batch Root Content
 app.post('/api/content', async (req: Request, res: Response) => {
   try {
     const { courseId } = req.body;
     if (!courseId) {
       return res.status(400).json({ error: 'courseId is required' });
     }
-    const response = await fetch(`${SERVICE_BASE_URL}/content`, {
-      method: 'POST',
-      headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courseId: String(courseId) }),
+    const response = await fetch(`${SERVICE_BASE_URL}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=root`, {
+      method: 'GET',
+      headers: DEFAULT_HEADERS,
     });
     if (!response.ok) {
       return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
     }
     const data = await response.json();
-    res.json(data);
+    res.json({ success: true, data: data.data || [] });
   } catch (error: any) {
     console.error('Error fetching content:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch batch content' });
@@ -99,42 +121,52 @@ app.post('/api/folder', async (req: Request, res: Response) => {
     if (!courseId || folderId === undefined) {
       return res.status(400).json({ error: 'courseId and folderId are required' });
     }
-    const response = await fetch(`${SERVICE_BASE_URL}/content/folder`, {
-      method: 'POST',
-      headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courseId: String(courseId), folderId: String(folderId) }),
+    const targetFolder = (!folderId || folderId === '0' || folderId === 0) ? 'root' : String(folderId);
+    const response = await fetch(`${SERVICE_BASE_URL}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=${encodeURIComponent(targetFolder)}`, {
+      method: 'GET',
+      headers: DEFAULT_HEADERS,
     });
     if (!response.ok) {
       return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
     }
     const data = await response.json();
-    res.json(data);
+    res.json({ success: true, data: data.data || [] });
   } catch (error: any) {
     console.error('Error fetching folder:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch folder content' });
   }
 });
 
-// 5. Video / PDF Details
+// 5. Video Details / Direct Stream Resolver (/get-url)
 app.post('/api/video-details', async (req: Request, res: Response) => {
   try {
-    const { courseId, contentId } = req.body;
-    if (!courseId || !contentId) {
-      return res.status(400).json({ error: 'courseId and contentId are required' });
+    const { courseId, contentId, vdcId } = req.body;
+    const targetVdc = vdcId || contentId;
+    if (!targetVdc) {
+      return res.status(400).json({ error: 'vdcId or contentId is required' });
     }
-    const response = await fetch(`${SERVICE_BASE_URL}/video-details`, {
-      method: 'POST',
-      headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courseId: String(courseId), contentId: String(contentId) }),
+    const response = await fetch(`${SERVICE_BASE_URL}/get-url?vdcid=${encodeURIComponent(String(targetVdc))}`, {
+      method: 'GET',
+      headers: DEFAULT_HEADERS,
     });
-    if (!response.ok) {
-      return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.url) {
+        return res.json({
+          success: true,
+          data: {
+            file_url: data.url,
+            stream_url: data.url,
+            directUrl: data.directUrl,
+            vdc_id: data.vdcId,
+          },
+        });
+      }
     }
-    const data = await response.json();
-    res.json(data);
+    res.json({ success: false, message: 'Stream not resolved' });
   } catch (error: any) {
     console.error('Error fetching video-details:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch video/content details' });
+    res.status(500).json({ error: error.message || 'Failed to fetch video details' });
   }
 });
 
@@ -459,290 +491,271 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
       sendEvent('status', { message: `Connecting to batch API for Course ID #${courseId}...` });
 
       // Step 1: Course Details
-    try {
-      const cdRes = await fetch(`${SERVICE_BASE_URL}/course-details`, {
-        method: 'POST',
-        headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId }),
-      });
-      if (cdRes.ok) {
-        const cdJson = await cdRes.json();
-        courseDetails = cdJson.data || cdJson;
-      }
-    } catch (e: any) {
-      sendEvent('log', { message: `Warning: Course details fetch failed: ${e.message}` });
-    }
-
-    sendEvent('status', {
-      message: `Course loaded: ${courseDetails?.title || 'Course #' + courseId}`,
-      courseDetails,
-    });
-
-    // Step 2: Fetch Root Content
-    sendEvent('status', { message: 'Fetching root content categories...' });
-    const contentRes = await fetch(`${SERVICE_BASE_URL}/content`, {
-      method: 'POST',
-      headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courseId }),
-    });
-
-    if (!contentRes.ok) {
-      throw new Error(`Failed to fetch course content: HTTP ${contentRes.status}`);
-    }
-
-    const contentJson = await contentRes.json();
-    const rootItems = contentJson.data || [];
-
-    sendEvent('log', { message: `Found ${rootItems.length} root section(s). Traversing folder tree...` });
-
-    // Use outer scoped variables (do not redeclare!)
-    const filesNeedingDetails: any[] = [];
-
-    // Fast parallel recursive folder crawler
-    async function crawlFolder(folderId: string | number, folderTitle: string, currentPath: string[]): Promise<any> {
-      totalFoldersCount++;
-      const folderPathStr = [...currentPath, folderTitle].join(' / ');
-      sendEvent('progress', {
-        folder: folderPathStr,
-        totalFolders: totalFoldersCount,
-        totalFiles: totalFilesCount,
-      });
-
-      let items: any[] = [];
       try {
-        const folderRes = await fetch(`${SERVICE_BASE_URL}/content/folder`, {
-          method: 'POST',
-          headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ courseId, folderId: String(folderId) }),
+        const cdRes = await fetch(`${SERVICE_BASE_URL}/course-details?courseId=${encodeURIComponent(String(courseId))}`, {
+          method: 'GET',
+          headers: DEFAULT_HEADERS,
+        });
+        if (cdRes.ok) {
+          const cdJson = await cdRes.json();
+          const overview = cdJson.data?.find((d: any) => d.type === 'overview' || d.title === 'Overview');
+          const details = overview?.data?.find((d: any) => d.layout_type === 'details')?.layout_data?.[0];
+          if (details) {
+            courseDetails = {
+              ...details,
+              course_id: String(details.id || courseId),
+              title: details.title || `Course #${courseId}`,
+            };
+          }
+        }
+      } catch (e: any) {
+        sendEvent('log', { message: `Warning: Course details fetch failed: ${e.message}` });
+      }
+
+      sendEvent('status', {
+        message: `Course loaded: ${courseDetails?.title || 'Course #' + courseId}`,
+        courseDetails,
+      });
+
+      // Step 2: Fetch Root Content
+      sendEvent('status', { message: 'Fetching root content categories from NT API...' });
+      const contentRes = await fetch(`${SERVICE_BASE_URL}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=root`, {
+        method: 'GET',
+        headers: DEFAULT_HEADERS,
+      });
+
+      if (!contentRes.ok) {
+        throw new Error(`Failed to fetch course content: HTTP ${contentRes.status}`);
+      }
+
+      const contentJson = await contentRes.json();
+      const rootItems = contentJson.data || [];
+
+      sendEvent('log', { message: `Found ${rootItems.length} root section(s). Traversing folder tree...` });
+
+      // Use outer scoped variables (do not redeclare!)
+      const filesNeedingDetails: any[] = [];
+
+      // Fast parallel recursive folder crawler
+      async function crawlFolder(folderId: string | number, folderTitle: string, currentPath: string[]): Promise<any> {
+        totalFoldersCount++;
+        const folderPathStr = [...currentPath, folderTitle].join(' / ');
+        sendEvent('progress', {
+          folder: folderPathStr,
+          totalFolders: totalFoldersCount,
+          totalFiles: totalFilesCount,
         });
 
-        if (folderRes.ok) {
-          const folderJson = await folderRes.json();
-          items = folderJson.data || [];
+        let items: any[] = [];
+        try {
+          const targetFolder = (!folderId || folderId === '0' || folderId === 0) ? 'root' : String(folderId);
+          const folderRes = await fetch(`${SERVICE_BASE_URL}/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=${encodeURIComponent(targetFolder)}`, {
+            method: 'GET',
+            headers: DEFAULT_HEADERS,
+          });
+
+          if (folderRes.ok) {
+            const folderJson = await folderRes.json();
+            items = folderJson.data || [];
+          }
+        } catch (err: any) {
+          sendEvent('log', { message: `Error fetching folder "${folderTitle}": ${err.message}` });
+          return {
+            id: String(folderId),
+            title: folderTitle,
+            path: currentPath,
+            folders: [],
+            files: [],
+          };
         }
-      } catch (err: any) {
-        sendEvent('log', { message: `Error fetching folder "${folderTitle}": ${err.message}` });
+
+        const filesInFolder: any[] = [];
+        const folderItems: any[] = [];
+
+        for (const item of items) {
+          if (item.type === 'folder') {
+            folderItems.push(item);
+          } else {
+            totalFilesCount++;
+            const fileData = item.data || {};
+            const entityId = item.entity_id || fileData.id;
+            const rawFileType = fileData.file_type;
+            const fullPath = [...currentPath, folderTitle].join(' / ');
+            const category = classifyFile(item.title || fileData.title, fullPath, fileData);
+
+            if (category === 'video') totalVideosCount++;
+            else if (category === 'notes') totalNotesCount++;
+            else if (category === 'dpp') totalDppsCount++;
+            else if (category === 'test') totalTestsCount++;
+            else totalLinksCount++;
+
+            const rawUrl = fileData.file_url || '';
+            // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+            const streamUrl = (category === 'video')
+              ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
+              : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+            const pdfUrl = (category === 'notes' || category === 'dpp' || category === 'test')
+              ? (rawUrl && !rawUrl.includes('/download/') ? rawUrl : (fileData.dynamic_link || ''))
+              : '';
+            const duration = fileData.duration || 0;
+            if (typeof duration === 'number') {
+              totalDurationSeconds += duration;
+            }
+
+            const fileEntry = {
+              id: String(entityId),
+              vdcId: fileData.vdc_id || '',
+              title: item.title || fileData.title || 'Untitled',
+              className: item.title || fileData.title || 'Untitled',
+              type: category,
+              rawFileType,
+              duration: formatDuration(duration),
+              durationSeconds: duration,
+              streamUrl,
+              pdfUrl,
+              downloadUrls: [],
+              shareUrl: fileData.dynamic_link || '',
+              isLocked: Boolean(fileData.is_locked),
+              isDrm: Boolean(fileData.is_drm),
+              path: fullPath,
+            };
+
+            filesInFolder.push(fileEntry);
+            allFilesList.push(fileEntry);
+
+            // Only queue video items that actually lack direct .m3u8 stream URLs and have a vdcId
+            if (deepFileDetails) {
+              if (category === 'video' && (!fileEntry.streamUrl || !fileEntry.streamUrl.includes('.m3u8'))) {
+                filesNeedingDetails.push(fileEntry);
+              }
+            }
+          }
+        }
+
+        // Crawl child folders concurrently
+        const subFolders = await Promise.all(
+          folderItems.map((sub) =>
+            crawlFolder(
+              sub.entity_id || sub.data?.id,
+              sub.title || sub.data?.title || 'Untitled Folder',
+              [...currentPath, folderTitle]
+            )
+          )
+        );
+
         return {
           id: String(folderId),
           title: folderTitle,
           path: currentPath,
-          folders: [],
-          files: [],
+          folders: subFolders,
+          files: filesInFolder,
         };
       }
 
-      const filesInFolder: any[] = [];
-      const folderItems: any[] = [];
+      const rootFolderItems = rootItems.filter((i: any) => i.type === 'folder');
+      const rootFileItems = rootItems.filter((i: any) => i.type !== 'folder');
 
-      for (const item of items) {
-        if (item.type === 'folder') {
-          folderItems.push(item);
-        } else {
-          totalFilesCount++;
-          const fileData = item.data || {};
-          const entityId = item.entity_id || fileData.id;
-          const rawFileType = fileData.file_type;
-          const fullPath = [...currentPath, folderTitle].join(' / ');
-          const category = classifyFile(item.title || fileData.title, fullPath, fileData);
+      for (const rootItem of rootFileItems) {
+        totalFilesCount++;
+        const fileData = rootItem.data || {};
+        const entityId = rootItem.entity_id || fileData.id;
+        const rawFileType = fileData.file_type;
+        const category = classifyFile(rootItem.title || fileData.title, '/', fileData);
 
-          if (category === 'video') totalVideosCount++;
-          else if (category === 'notes') totalNotesCount++;
-          else if (category === 'dpp') totalDppsCount++;
-          else if (category === 'test') totalTestsCount++;
-          else totalLinksCount++;
+        if (category === 'video') totalVideosCount++;
+        else if (category === 'notes') totalNotesCount++;
+        else if (category === 'dpp') totalDppsCount++;
+        else if (category === 'test') totalTestsCount++;
+        else totalLinksCount++;
 
-          const rawUrl = fileData.file_url || '';
-          // For NT videos: strictly only .m3u8 direct stream URLs, never download links
-          const streamUrl = (category === 'video')
-            ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
-            : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
-          const pdfUrl = (category === 'notes' || category === 'dpp' || category === 'test')
-            ? (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '')
-            : '';
-          const duration = fileData.duration || 0;
-          if (typeof duration === 'number') {
-            totalDurationSeconds += duration;
-          }
+        const rawUrl = fileData.file_url || '';
+        // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+        const streamUrl = (category === 'video')
+          ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
+          : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+        const pdfUrl = (category === 'notes' || category === 'dpp' || category === 'test')
+          ? (rawUrl && !rawUrl.includes('/download/') ? rawUrl : (fileData.dynamic_link || ''))
+          : '';
+        const duration = fileData.duration || 0;
+        if (typeof duration === 'number') totalDurationSeconds += duration;
 
-          const fileEntry = {
-            id: String(entityId),
-            title: item.title || fileData.title || 'Untitled',
-            className: item.title || fileData.title || 'Untitled',
-            type: category,
-            rawFileType,
-            duration: formatDuration(duration),
-            durationSeconds: duration,
-            streamUrl,
-            pdfUrl,
-            downloadUrls: [],
-            shareUrl: fileData.dynamic_link || '',
-            isLocked: Boolean(fileData.is_locked),
-            isDrm: Boolean(fileData.is_drm),
-            path: fullPath,
-          };
+        const fileEntry = {
+          id: String(entityId),
+          vdcId: fileData.vdc_id || '',
+          title: rootItem.title || fileData.title || 'Untitled',
+          className: rootItem.title || fileData.title || 'Untitled',
+          type: category,
+          rawFileType,
+          duration: formatDuration(duration),
+          durationSeconds: duration,
+          streamUrl,
+          pdfUrl,
+          downloadUrls: [],
+          shareUrl: fileData.dynamic_link || '',
+          isLocked: Boolean(fileData.is_locked),
+          isDrm: Boolean(fileData.is_drm),
+          path: '/',
+        };
+        allFilesList.push(fileEntry);
 
-          filesInFolder.push(fileEntry);
-          allFilesList.push(fileEntry);
-
-          // Only queue items that actually lack direct .m3u8 stream URLs or PDF links
-          if (deepFileDetails) {
-            if (category === 'video' && (!fileEntry.streamUrl || !fileEntry.streamUrl.includes('.m3u8'))) {
-              filesNeedingDetails.push(fileEntry);
-            } else if ((category === 'notes' || category === 'dpp' || category === 'test') && !fileEntry.pdfUrl) {
-              filesNeedingDetails.push(fileEntry);
-            }
+        if (deepFileDetails) {
+          if (category === 'video' && (!fileEntry.streamUrl || !fileEntry.streamUrl.includes('.m3u8'))) {
+            filesNeedingDetails.push(fileEntry);
           }
         }
       }
 
-      // Crawl child folders concurrently
-      const subFolders = await Promise.all(
-        folderItems.map((sub) =>
+      // Crawl all root folders in parallel
+      const crawledRoots = await Promise.all(
+        rootFolderItems.map((rootItem: any) =>
           crawlFolder(
-            sub.entity_id || sub.data?.id,
-            sub.title || sub.data?.title || 'Untitled Folder',
-            [...currentPath, folderTitle]
+            rootItem.entity_id || rootItem.data?.id,
+            rootItem.title || rootItem.data?.title || 'Root Folder',
+            []
           )
         )
       );
+      treeNodes.push(...crawledRoots);
 
-      return {
-        id: String(folderId),
-        title: folderTitle,
-        path: currentPath,
-        folders: subFolders,
-        files: filesInFolder,
-      };
-    }
+      // Step 3: Fast concurrent probe of direct .m3u8 Stream URLs via /get-url
+      if (deepFileDetails && filesNeedingDetails.length > 0) {
+        sendEvent('status', {
+          message: `Resolving direct .m3u8 stream URLs for ${filesNeedingDetails.length} video lectures...`,
+        });
 
-    const rootFolderItems = rootItems.filter((i: any) => i.type === 'folder');
-    const rootFileItems = rootItems.filter((i: any) => i.type !== 'folder');
+        const CONCURRENCY = 40;
+        for (let i = 0; i < filesNeedingDetails.length; i += CONCURRENCY) {
+          const chunk = filesNeedingDetails.slice(i, i + CONCURRENCY);
+          await Promise.all(
+            chunk.map(async (fileItem) => {
+              try {
+                if (fileItem.type === 'video' && fileItem.vdcId) {
+                  const uRes = await fetch(`${SERVICE_BASE_URL}/get-url?vdcid=${encodeURIComponent(fileItem.vdcId)}`, {
+                    method: 'GET',
+                    headers: DEFAULT_HEADERS,
+                    signal: AbortSignal.timeout(4000),
+                  });
+                  if (uRes.ok) {
+                    const uJson = await uRes.json();
+                    if (uJson.success && uJson.url && uJson.url.includes('.m3u8')) {
+                      fileItem.streamUrl = uJson.url;
+                    }
+                  }
+                }
+              } catch {
+                // ignore single item failure
+              }
+            })
+          );
 
-    for (const rootItem of rootFileItems) {
-      totalFilesCount++;
-      const fileData = rootItem.data || {};
-      const entityId = rootItem.entity_id || fileData.id;
-      const rawFileType = fileData.file_type;
-      const category = classifyFile(rootItem.title || fileData.title, '/', fileData);
-
-      if (category === 'video') totalVideosCount++;
-      else if (category === 'notes') totalNotesCount++;
-      else if (category === 'dpp') totalDppsCount++;
-      else if (category === 'test') totalTestsCount++;
-      else totalLinksCount++;
-
-      const rawUrl = fileData.file_url || '';
-      // For NT videos: strictly only .m3u8 direct stream URLs, never download links
-      const streamUrl = (category === 'video')
-        ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
-        : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
-      const pdfUrl = (category === 'notes' || category === 'dpp' || category === 'test')
-        ? (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '')
-        : '';
-      const duration = fileData.duration || 0;
-      if (typeof duration === 'number') totalDurationSeconds += duration;
-
-      const fileEntry = {
-        id: String(entityId),
-        title: rootItem.title || fileData.title || 'Untitled',
-        className: rootItem.title || fileData.title || 'Untitled',
-        type: category,
-        rawFileType,
-        duration: formatDuration(duration),
-        durationSeconds: duration,
-        streamUrl,
-        pdfUrl,
-        downloadUrls: [],
-        shareUrl: fileData.dynamic_link || '',
-        isLocked: Boolean(fileData.is_locked),
-        isDrm: Boolean(fileData.is_drm),
-        path: '/',
-      };
-      allFilesList.push(fileEntry);
-
-      if (deepFileDetails) {
-        if (category === 'video' && (!fileEntry.streamUrl || !fileEntry.streamUrl.includes('.m3u8'))) {
-          filesNeedingDetails.push(fileEntry);
-        } else if ((category === 'notes' || category === 'dpp' || category === 'test') && !fileEntry.pdfUrl) {
-          filesNeedingDetails.push(fileEntry);
+          sendEvent('progress', {
+            folder: `Resolved stream links: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
+            totalFolders: totalFoldersCount,
+            totalFiles: totalFilesCount,
+          });
         }
       }
     }
-
-    // Crawl all root folders in parallel
-    const crawledRoots = await Promise.all(
-      rootFolderItems.map((rootItem: any) =>
-        crawlFolder(
-          rootItem.entity_id || rootItem.data?.id,
-          rootItem.title || rootItem.data?.title || 'Root Folder',
-          []
-        )
-      )
-    );
-    treeNodes.push(...crawledRoots);
-
-    // Step 3: Fast concurrent probe of video-details to resolve exact .m3u8 Stream URLs & PDF links
-    if (deepFileDetails && filesNeedingDetails.length > 0) {
-      sendEvent('status', {
-        message: `Resolving direct .m3u8 stream URLs & document links for ${filesNeedingDetails.length} items...`,
-      });
-
-      const CONCURRENCY = 40;
-      for (let i = 0; i < filesNeedingDetails.length; i += CONCURRENCY) {
-        const chunk = filesNeedingDetails.slice(i, i + CONCURRENCY);
-        await Promise.all(
-          chunk.map(async (fileItem) => {
-            try {
-              const vdRes = await fetch(`${SERVICE_BASE_URL}/video-details`, {
-                method: 'POST',
-                headers: { ...DEFAULT_HEADERS, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ courseId, contentId: String(fileItem.id) }),
-                signal: AbortSignal.timeout(4000),
-              });
-              if (vdRes.ok) {
-                const vdJson = await vdRes.json();
-                const vdData = vdJson.data || {};
-                if (vdData.file_url) {
-                  if (fileItem.type === 'video') {
-                    // In NT, video URLs must strictly be direct .m3u8 stream URLs only!
-                    if (vdData.file_url.includes('.m3u8') && !vdData.file_url.includes('/download/')) {
-                      fileItem.streamUrl = vdData.file_url;
-                    }
-                  } else {
-                    fileItem.pdfUrl = vdData.file_url;
-                    fileItem.streamUrl = vdData.file_url;
-                  }
-                }
-                if (vdData.dynamic_link) {
-                  fileItem.shareUrl = vdData.dynamic_link;
-                } else if (vdData.share_url && !fileItem.shareUrl) {
-                  fileItem.shareUrl = vdData.share_url;
-                } else if (vdData.link && !fileItem.shareUrl) {
-                  fileItem.shareUrl = vdData.link;
-                }
-                if (vdData.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
-                  const dNum = parseInt(String(vdData.duration), 10);
-                  if (!isNaN(dNum)) {
-                    fileItem.durationSeconds = dNum;
-                    fileItem.duration = formatDuration(dNum);
-                    totalDurationSeconds += dNum;
-                  }
-                }
-              }
-            } catch {
-              // ignore single item failure
-            }
-          })
-        );
-
-        sendEvent('progress', {
-          folder: `Resolved stream links: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
-          totalFolders: totalFoldersCount,
-          totalFiles: totalFilesCount,
-        });
-      }
-    }
-  }
 
     sendEvent('status', { message: 'Compiling structured TXT reports...' });
 
