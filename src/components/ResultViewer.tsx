@@ -7,6 +7,7 @@ import {
   generateSWBash,
   generateSWPowerShell,
 } from '../services/swGenerators';
+import { isValidStreamOrDocUrl, formatEntryId, getMediaTag } from '../services/api';
 import {
   Download,
   Copy,
@@ -163,23 +164,16 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, onReset }) =
 
     files.forEach((file) => {
       const isVideo = file.type === 'video';
-      // In NT: videos must strictly be direct .m3u8 stream URLs only, never download links
+      // In NT: videos must strictly be direct .m3u8 stream URLs only, never download links or dynamic links
       const targetUrl = isVideo
-        ? (file.streamUrl && file.streamUrl.includes('.m3u8') && !file.streamUrl.includes('/download/') ? file.streamUrl : '')
-        : (file.pdfUrl || (file.streamUrl && !file.streamUrl.includes('/download/') ? file.streamUrl : ''));
-      if (!targetUrl) return;
+        ? (file.streamUrl && file.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : '')
+        : ((file.pdfUrl && isValidStreamOrDocUrl(file.pdfUrl)) ? file.pdfUrl : (file.streamUrl && isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : ''));
+      if (!isValidStreamOrDocUrl(targetUrl)) return;
 
-      let cat = 'FILE';
-      if (file.type === 'video') cat = 'VIDEO';
-      else if (file.type === 'notes' || file.type === 'dpp') cat = 'PDF';
-      else if (file.type === 'test') cat = 'TEST';
+      const cat = getMediaTag(file);
 
-      let title = file.title;
-      if (file.type === 'dpp' && !title.toLowerCase().startsWith('dpp')) {
-        title = `DPP - ${title}`;
-      }
-
-      if (includeFolderInTitle && file.path) {
+      let title = (file.title || 'Untitled').trim();
+      if (includeFolderInTitle && file.path && file.path !== 'Root' && file.path !== '/') {
         title = `${file.path} - ${title}`;
       }
 
@@ -188,9 +182,10 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, onReset }) =
         durationSuffix = ` (${file.duration})`;
       }
 
+      const combinedId = formatEntryId(file.id, result.courseId);
       let idSuffix = '';
-      if (includeId && file.id) {
-        idSuffix = ` (id: ${file.id})`;
+      if (includeId && combinedId) {
+        idSuffix = ` (id: ${combinedId})`;
       }
 
       const prefix = includeCategoryTag ? `[${cat}] ` : '';
@@ -663,18 +658,17 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, onReset }) =
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-bold">
                 <Bot className="w-4 h-4" />
-                <span>HTML Maker / Telegram Bot Format ([CATEGORY] Title: link)</span>
+                <span>Bot Format ([VIDEO/PDF-LECTURE/DPP/NOTES] Title (id: courseid-contentid): link)</span>
               </div>
               <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-mono text-[11px] w-fit">
-                Prevents "Link 1, Link 1" Fallback
+                Bot-Compatible
               </span>
             </div>
             <p className="text-muted-foreground text-xs leading-relaxed">
-              Bots parse each line in the format{' '}
+              Bot format line structure:{' '}
               <code className="bg-background px-1.5 py-0.5 rounded border border-border text-emerald-600 dark:text-emerald-400 font-mono">
-                [CATEGORY] Title: link
+                [VIDEO-LECTURE/DPP or PDF-NOTES/DPP/LECTURE] Title (id: courseid-contentid) (duration): link
               </code>
-              . This ensures every button generated displays the actual lecture / note title.
             </p>
 
             <div className="pt-2 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-foreground border-t border-border">
@@ -690,7 +684,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, onReset }) =
                   onChange={(e) => setIncludeCategoryTag(e.target.checked)}
                   className="rounded border-border text-primary focus:ring-ring"
                 />
-                <span>[CATEGORY] Tag</span>
+                <span>Category Tag</span>
               </label>
 
               <label className="flex items-center space-x-1.5 cursor-pointer">
@@ -720,7 +714,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, onReset }) =
                   onChange={(e) => setIncludeId(e.target.checked)}
                   className="rounded border-border text-primary focus:ring-ring"
                 />
-                <span>Content ID</span>
+                <span>(id: courseid-contentid)</span>
               </label>
 
               <div className="flex items-center space-x-1.5 ml-auto">

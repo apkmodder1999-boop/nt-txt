@@ -111,6 +111,55 @@ function classifyFile(
   return 'other';
 }
 
+function isValidStreamOrDocUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const u = String(url).trim();
+  if (!u || u === 'N/A' || u === '""' || u === "''") return false;
+  if (u.includes('/dl/r/') || u.includes('course.nexttoppers.com') || u.includes('/dynamic_link')) return false;
+  if (u.includes('/download/')) return false;
+  return u.startsWith('http://') || u.startsWith('https://');
+}
+
+function formatEntryId(rawId: any, currentCourseId: any): string {
+  const idStr = String(rawId || '').trim();
+  const cId = String(currentCourseId || '').trim();
+  if (!idStr || idStr === '0') return cId ? `${cId}-0` : '';
+  if (cId) {
+    if (idStr.startsWith(`${cId}-`)) return idStr;
+    if (idStr.startsWith(`${cId}_`)) return `${cId}-${idStr.slice(cId.length + 1)}`;
+    const dashIdx = idStr.indexOf('-');
+    if (dashIdx > 0 && idStr.slice(0, dashIdx) === cId) {
+      return idStr;
+    }
+    return `${cId}-${idStr}`;
+  }
+  return idStr;
+}
+
+function getMediaTag(file: { type?: string; title?: string; path?: string }): string {
+  const isVideo = file.type === 'video';
+  const t = (file.title || '').toLowerCase();
+  const p = (file.path || '').toLowerCase();
+
+  const isDpp = file.type === 'dpp' || t.includes('dpp') || t.includes('practice sheet') || p.includes('dpp') || t.includes('worksheet') || t.includes('assignment');
+  const isNotes = file.type === 'notes' || t.includes('note') || p.includes('note') || t.includes('handwritten') || t.includes('study material');
+  const isTest = file.type === 'test' || t.includes('test') || p.includes('test');
+  const isLecture = file.type === 'lecture' || t.includes('lecture') || t.includes('class') || /\bl-?\s*\d+/i.test(t) || /\bch-?\s*\d+/i.test(t);
+
+  if (isVideo) {
+    if (isDpp) return 'VIDEO-DPP';
+    if (isTest) return 'VIDEO-TEST';
+    if (isNotes && !isLecture) return 'VIDEO-NOTES';
+    return 'VIDEO-LECTURE';
+  } else {
+    if (isDpp) return 'PDF-DPP';
+    if (isNotes) return 'PDF-NOTES';
+    if (isTest) return 'PDF-TEST';
+    if (isLecture) return 'PDF-LECTURE';
+    return 'PDF-NOTES';
+  }
+}
+
 export const onRequestOptions = async () => {
   return new Response(null, {
     status: 204,
@@ -597,21 +646,16 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
           allFilesList.forEach((file) => {
             const isVideo = file.type === 'video';
-            const targetUrl = isVideo ? file.streamUrl : file.pdfUrl || file.streamUrl;
-            if (!targetUrl) return;
+            const targetUrl = isVideo
+              ? (file.streamUrl && file.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : '')
+              : ((file.pdfUrl && isValidStreamOrDocUrl(file.pdfUrl)) ? file.pdfUrl : (file.streamUrl && isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : ''));
+            if (!isValidStreamOrDocUrl(targetUrl)) return;
 
-            let cat = 'FILE';
-            if (file.type === 'video') cat = 'VIDEO';
-            else if (file.type === 'notes' || file.type === 'dpp') cat = 'PDF';
-            else if (file.type === 'test') cat = 'TEST';
-
-            let titleDisplay = file.title;
-            if (file.type === 'dpp' && !titleDisplay.toLowerCase().startsWith('dpp')) {
-              titleDisplay = `DPP - ${titleDisplay}`;
-            }
-
-            let durationSuffix = file.duration && file.duration !== 'N/A' ? ` (${file.duration})` : '';
-            let idSuffix = file.id ? ` (id: ${file.id})` : '';
+            const cat = getMediaTag(file);
+            const titleDisplay = (file.title || 'Untitled').trim();
+            const durationSuffix = file.duration && file.duration !== 'N/A' ? ` (${file.duration})` : '';
+            const combinedId = formatEntryId(file.id, courseId);
+            const idSuffix = combinedId ? ` (id: ${combinedId})` : '';
 
             botFormatTxt += `[${cat}] ${titleDisplay}${idSuffix}${durationSuffix}: ${targetUrl}\n`;
           });
@@ -763,20 +807,19 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               else totalLinksCount++;
 
               let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
-              // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+              // For NT videos: strictly only .m3u8 direct stream URLs, never download links or dynamic links
               let streamUrl = (fileType === 'video')
-                ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
-                : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+                ? (rawUrl && rawUrl.includes('.m3u8') && isValidStreamOrDocUrl(rawUrl) ? rawUrl : '')
+                : (rawUrl && isValidStreamOrDocUrl(rawUrl) ? rawUrl : '');
               let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
                 ? (fileData.file_url || fileData.pdf_url || '')
                 : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
-              const dynamicLink = fileData.dynamic_link || '';
-              // If test, populate stream/pdf with dynamic test link if not already set
-              if (fileType === 'test' && dynamicLink) {
-                if (!streamUrl) streamUrl = dynamicLink;
-                if (!pdfUrl) pdfUrl = dynamicLink;
+              if (pdfUrl && !isValidStreamOrDocUrl(pdfUrl)) {
+                pdfUrl = '';
               }
+
+              const dynamicLink = fileData.dynamic_link || '';
 
               const rawDuration = fileData.duration || item.duration;
               let durationSec = 0;
@@ -852,13 +895,17 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           else totalLinksCount++;
 
           let rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
-          // For NT videos: strictly only .m3u8 direct stream URLs, never download links
+          // For NT videos: strictly only .m3u8 direct stream URLs, never download links or dynamic links
           let streamUrl = (fileType === 'video')
-            ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
-            : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+            ? (rawUrl && rawUrl.includes('.m3u8') && isValidStreamOrDocUrl(rawUrl) ? rawUrl : '')
+            : (rawUrl && isValidStreamOrDocUrl(rawUrl) ? rawUrl : '');
           let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
             ? (fileData.file_url || fileData.pdf_url || '')
             : (fileData.pdf_url || item.pdf_url || item.document_url || '');
+
+          if (pdfUrl && !isValidStreamOrDocUrl(pdfUrl)) {
+            pdfUrl = '';
+          }
 
           const rawDuration = fileData.duration || item.duration;
           let durationSec = 0;
@@ -991,7 +1038,9 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         } else {
           videoFiles.forEach((file) => {
             const durationStr = file.duration && file.duration !== 'N/A' ? `  (Duration: ${file.duration})` : '';
-            directLinksTxt += `[VIDEO] ${file.title}  (id: ${file.id})${durationStr}: ${file.streamUrl || 'N/A'}\n`;
+            const streamLink = (file.streamUrl && file.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(file.streamUrl)) ? file.streamUrl : 'N/A';
+            const entryId = formatEntryId(file.id, courseId);
+            directLinksTxt += `[VIDEO-LECTURE] ${file.title}  (id: ${entryId})${durationStr}: ${streamLink}\n`;
             directLinksTxt += `Folder: ${file.path}\n\n`;
             directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
           });
@@ -1006,8 +1055,9 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           directLinksTxt += `# No class notes found in this batch.\n\n`;
         } else {
           noteFiles.forEach((file) => {
-            const pdfLink = file.pdfUrl || file.streamUrl;
-            directLinksTxt += `[PDF] ${file.title}  (id: ${file.id}): ${pdfLink || 'N/A'}\n`;
+            const pdfLink = (file.pdfUrl && isValidStreamOrDocUrl(file.pdfUrl)) ? file.pdfUrl : (isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : 'N/A');
+            const entryId = formatEntryId(file.id, courseId);
+            directLinksTxt += `[PDF-NOTES] ${file.title}  (id: ${entryId}): ${pdfLink}\n`;
             directLinksTxt += `Folder: ${file.path}\n\n`;
             directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
           });
@@ -1022,8 +1072,9 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           directLinksTxt += `# No DPPs or practice sheets found in this batch.\n\n`;
         } else {
           dppFiles.forEach((file) => {
-            const pdfLink = file.pdfUrl || file.streamUrl;
-            directLinksTxt += `[PDF] DPP - ${file.title}  (id: ${file.id}): ${pdfLink || 'N/A'}\n`;
+            const pdfLink = (file.pdfUrl && isValidStreamOrDocUrl(file.pdfUrl)) ? file.pdfUrl : (isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : 'N/A');
+            const entryId = formatEntryId(file.id, courseId);
+            directLinksTxt += `[PDF-DPP] ${file.title}  (id: ${entryId}): ${pdfLink}\n`;
             directLinksTxt += `Subject: ${file.path}\n\n`;
             directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
           });
@@ -1036,8 +1087,9 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
           directLinksTxt += `# ==============================================================================\n\n`;
 
           testAndOtherFiles.forEach((file) => {
-            const link = file.pdfUrl || file.streamUrl;
-            directLinksTxt += `[PDF] Test - ${file.title}  (id: ${file.id}): ${link || 'N/A'}\n`;
+            const link = (file.pdfUrl && isValidStreamOrDocUrl(file.pdfUrl)) ? file.pdfUrl : (isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : 'N/A');
+            const entryId = formatEntryId(file.id, courseId);
+            directLinksTxt += `[PDF-TEST] ${file.title}  (id: ${entryId}): ${link}\n`;
             directLinksTxt += `Folder: ${file.path}\n\n`;
             directLinksTxt += `--------------------------------------------------------------------------------\n\n`;
           });
@@ -1047,21 +1099,16 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         let botFormatTxt = `// Built by t.me/devnaitikanonymous | Join: t.me/learn_topper\n`;
         allFilesList.forEach((file) => {
           const isVideo = file.type === 'video';
-          const targetUrl = isVideo ? file.streamUrl : file.pdfUrl || file.streamUrl;
-          if (!targetUrl) return;
+          const targetUrl = isVideo
+            ? (file.streamUrl && file.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : '')
+            : ((file.pdfUrl && isValidStreamOrDocUrl(file.pdfUrl)) ? file.pdfUrl : (file.streamUrl && isValidStreamOrDocUrl(file.streamUrl) ? file.streamUrl : ''));
+          if (!isValidStreamOrDocUrl(targetUrl)) return;
 
-          let cat = 'FILE';
-          if (file.type === 'video') cat = 'VIDEO';
-          else if (file.type === 'notes' || file.type === 'dpp') cat = 'PDF';
-          else if (file.type === 'test') cat = 'TEST';
-
-          let titleDisplay = file.title;
-          if (file.type === 'dpp' && !titleDisplay.toLowerCase().startsWith('dpp')) {
-            titleDisplay = `DPP - ${titleDisplay}`;
-          }
-
-          let durationSuffix = file.duration && file.duration !== 'N/A' ? ` (${file.duration})` : '';
-          let idSuffix = file.id ? ` (id: ${file.id})` : '';
+          const cat = getMediaTag(file);
+          const titleDisplay = (file.title || 'Untitled').trim();
+          const durationSuffix = file.duration && file.duration !== 'N/A' ? ` (${file.duration})` : '';
+          const combinedId = formatEntryId(file.id, courseId);
+          const idSuffix = combinedId ? ` (id: ${combinedId})` : '';
 
           botFormatTxt += `[${cat}] ${titleDisplay}${idSuffix}${durationSuffix}: ${targetUrl}\n`;
         });
@@ -1070,23 +1117,23 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         let rawUrlsTxt = `# ==============================================================================\n# Built by t.me/devnaitikanonymous\n# Official Updates: t.me/learn_topper\n# ==============================================================================\n# Stream URLs & Content Links for Course: ${courseTitle} (ID: ${courseId})\n# Generated on: ${dateNow}\n\n`;
         rawUrlsTxt += `# --- STREAM VIDEOS (.M3U8) ---\n`;
         videoFiles.forEach((v) => {
-          if (v.streamUrl) rawUrlsTxt += `${v.streamUrl}\n`;
+          if (v.streamUrl && v.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(v.streamUrl)) rawUrlsTxt += `${v.streamUrl}\n`;
         });
         rawUrlsTxt += `\n# --- CLASS NOTES ---\n`;
         noteFiles.forEach((p) => {
           const link = p.pdfUrl || p.streamUrl;
-          if (link) rawUrlsTxt += `${link}\n`;
+          if (isValidStreamOrDocUrl(link)) rawUrlsTxt += `${link}\n`;
         });
         rawUrlsTxt += `\n# --- DPPS & PRACTICE SHEETS ---\n`;
         dppFiles.forEach((d) => {
           const link = d.pdfUrl || d.streamUrl;
-          if (link) rawUrlsTxt += `${link}\n`;
+          if (isValidStreamOrDocUrl(link)) rawUrlsTxt += `${link}\n`;
         });
 
         // 4. M3U Playlist
         let m3u = `#EXTM3U\n# Course: ${courseTitle} (ID: ${courseId})\n\n`;
         videoFiles
-          .filter((f) => f.streamUrl)
+          .filter((f) => f.streamUrl && f.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(f.streamUrl))
           .forEach((v) => {
             m3u += `#EXTINF:-1 group-title="${v.path.replace(/"/g, '')}",Class: ${v.title.replace(/,/g, ' ')}\n${v.streamUrl}\n`;
           });

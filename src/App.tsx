@@ -11,6 +11,7 @@ import {
   parseDownloadUrls,
   classifyFile,
   generateTxtFiles,
+  isValidStreamOrDocUrl,
   fetchSWCourses,
   extractSWBatch,
 } from './services/api';
@@ -306,13 +307,16 @@ export default function App() {
         const finalData: ExtractionResult = JSON.parse(e.data);
         finalData.platform = platform;
 
-        // For NT: strictly sanitize to ensure ONLY & ONLY stream URLs (.m3u8), and zero download links
+        // For NT: strictly sanitize to ensure ONLY & ONLY stream URLs (.m3u8), and zero download or dynamic links
         if (platform === 'NT' && finalData.allFiles) {
           finalData.allFiles.forEach((f) => {
             if (f.type === 'video') {
-              if (!f.streamUrl || !f.streamUrl.includes('.m3u8') || f.streamUrl.includes('/download/')) {
+              if (!f.streamUrl || !f.streamUrl.includes('.m3u8') || f.streamUrl.includes('/download/') || f.streamUrl.includes('/dl/r/') || f.streamUrl.includes('course.nexttoppers.com')) {
                 f.streamUrl = '';
               }
+            }
+            if (f.pdfUrl && (f.pdfUrl.includes('/download/') || f.pdfUrl.includes('/dl/r/') || f.pdfUrl.includes('course.nexttoppers.com'))) {
+              f.pdfUrl = '';
             }
             f.downloadUrls = [];
           });
@@ -334,13 +338,15 @@ export default function App() {
                     if (vd) {
                       const resUrl = vd.file_url || vd.stream_url || '';
                       if (fileItem.type === 'video') {
-                        // Strictly only .m3u8 direct stream URLs, never download links
-                        if (resUrl && resUrl.includes('.m3u8') && !resUrl.includes('/download/')) {
+                        // Strictly only .m3u8 direct stream URLs, never download links or dynamic links
+                        if (resUrl && resUrl.includes('.m3u8') && isValidStreamOrDocUrl(resUrl)) {
                           fileItem.streamUrl = resUrl;
                         }
                       } else {
-                        fileItem.pdfUrl = resUrl;
-                        fileItem.streamUrl = resUrl;
+                        if (isValidStreamOrDocUrl(resUrl)) {
+                          fileItem.pdfUrl = resUrl;
+                          fileItem.streamUrl = resUrl;
+                        }
                       }
                       if (vd.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
                         const d = typeof vd.duration === 'string' ? parseInt(vd.duration, 10) : vd.duration;
@@ -563,11 +569,11 @@ export default function App() {
               ? (fileData.file_url || fileData.pdf_url || '')
               : (fileData.pdf_url || item.pdf_url || item.document_url || '');
 
-            const dynamicLink = fileData.dynamic_link || item.dynamic_link || '';
-            if (fileType === 'test' && dynamicLink) {
-              if (!streamUrl) streamUrl = dynamicLink;
-              if (!pdfUrl) pdfUrl = dynamicLink;
+            if (pdfUrl && (pdfUrl.includes('/dl/r/') || pdfUrl.includes('course.nexttoppers.com') || pdfUrl.includes('/download/'))) {
+              pdfUrl = '';
             }
+
+            const dynamicLink = fileData.dynamic_link || item.dynamic_link || '';
 
             const rawDuration = fileData.duration || item.duration;
             let durationSec = 0;
@@ -645,11 +651,15 @@ export default function App() {
 
         const rawUrl = fileData.file_url || fileData.stream_url || item.stream_url || '';
         let streamUrl = (fileType === 'video')
-          ? (rawUrl && rawUrl.includes('.m3u8') && !rawUrl.includes('/download/') ? rawUrl : '')
-          : (rawUrl && !rawUrl.includes('/download/') ? rawUrl : '');
+          ? (rawUrl && rawUrl.includes('.m3u8') && isValidStreamOrDocUrl(rawUrl) ? rawUrl : '')
+          : (rawUrl && isValidStreamOrDocUrl(rawUrl) ? rawUrl : '');
         let pdfUrl = (fileType === 'notes' || fileType === 'dpp' || fileType === 'test')
           ? (fileData.file_url || fileData.pdf_url || '')
           : (fileData.pdf_url || item.pdf_url || item.document_url || '');
+
+        if (pdfUrl && !isValidStreamOrDocUrl(pdfUrl)) {
+          pdfUrl = '';
+        }
 
         const rawDuration = fileData.duration || item.duration;
         let durationSec = 0;
@@ -706,13 +716,15 @@ export default function App() {
                 if (vidDetails) {
                   const resUrl = vidDetails.file_url || vidDetails.stream_url || '';
                   if (fileItem.type === 'video') {
-                    // Strictly only .m3u8 direct stream URLs, never download links
-                    if (resUrl && resUrl.includes('.m3u8') && !resUrl.includes('/download/')) {
+                    // Strictly only .m3u8 direct stream URLs, never download links or dynamic links
+                    if (resUrl && resUrl.includes('.m3u8') && isValidStreamOrDocUrl(resUrl)) {
                       fileItem.streamUrl = resUrl;
                     }
                   } else {
-                    fileItem.pdfUrl = resUrl;
-                    fileItem.streamUrl = resUrl;
+                    if (isValidStreamOrDocUrl(resUrl)) {
+                      fileItem.pdfUrl = resUrl;
+                      fileItem.streamUrl = resUrl;
+                    }
                   }
 
                   if (vidDetails.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
