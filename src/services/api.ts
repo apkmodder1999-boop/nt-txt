@@ -60,91 +60,188 @@ export async function fetchSWCourseClasses(courseId: string): Promise<any> {
 }
 
 export async function fetchBatches(): Promise<BatchSection[]> {
-  const res = await fetch('/api/batches');
-  if (!res.ok) {
-    throw new Error(`Failed to fetch batches catalog: HTTP ${res.status}`);
-  }
-  const text = await res.text();
   try {
-    return JSON.parse(text);
+    const res = await fetch('/api/batches');
+    if (res.ok) {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        if (Array.isArray(json) && json.length > 0) return json;
+      } catch {}
+    }
   } catch {
-    throw new Error(`Invalid response from /api/batches: ${text.slice(0, 80)}`);
+    // Fall back to direct upstream
   }
+
+  const direct = await fetch('https://nt.learn-topper.workers.dev/courses', {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+      Accept: 'application/json, text/plain, */*',
+    },
+  });
+  if (!direct.ok) {
+    throw new Error(`Failed to fetch batches: HTTP ${direct.status}`);
+  }
+  const dJson = await direct.json();
+  const courseList = dJson.data?.find((l: any) => l.layout_type === 'course_list_layout')?.list || [];
+  return [
+    {
+      section: 'Next Toppers Courses',
+      batches: courseList.map((c: any) => ({
+        id: c.id,
+        name: c.title || c.name || `Course ${c.id}`,
+        badge: c.is_trending || (c.is_new ? 'New' : (c.offer_price ? `₹${c.offer_price}` : null)),
+        thumbnail: c.thumbnail,
+        actions: ['Explore'],
+      })),
+    },
+  ];
 }
 
 export async function fetchCourseDetails(courseId: string): Promise<CourseDetails> {
-  const res = await fetch('/api/course-details', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ courseId }),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch course details: HTTP ${res.status}`);
-  }
-  const text = await res.text();
   try {
-    return JSON.parse(text);
+    const res = await fetch('/api/course-details', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseId }),
+    });
+    if (res.ok) {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        if (json.data || json.title) return json.data || json;
+      } catch {}
+    }
   } catch {
-    throw new Error(`Invalid response from /api/course-details: ${text.slice(0, 80)}`);
+    // Fall back to direct upstream
   }
+
+  const direct = await fetch(
+    `https://nt.learn-topper.workers.dev/course-details?courseId=${encodeURIComponent(String(courseId))}`
+  );
+  if (!direct.ok) {
+    throw new Error(`Failed to fetch course details: HTTP ${direct.status}`);
+  }
+  const dJson = await direct.json();
+  const overview = dJson.data?.find((d: any) => d.type === 'overview' || d.title === 'Overview');
+  const details = overview?.data?.find((d: any) => d.layout_type === 'details')?.layout_data?.[0];
+  return {
+    course_id: String(courseId),
+    title: details?.title || `Course #${courseId}`,
+    description: details?.description || '',
+    thumbnail: details?.thumbnail || '',
+    image: details?.thumbnail || '',
+  };
 }
 
 export async function fetchBatchContent(courseId: string): Promise<any[]> {
-  const res = await fetch('/api/content', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ courseId }),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch batch content: HTTP ${res.status}`);
-  }
-  const text = await res.text();
   try {
-    const json = JSON.parse(text);
-    return json.data || [];
+    const res = await fetch('/api/content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseId }),
+    });
+    if (res.ok) {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        if (Array.isArray(json.data)) return json.data;
+      } catch {}
+    }
   } catch {
-    throw new Error(`Invalid response from /api/content: ${text.slice(0, 80)}`);
+    // Fall back to direct upstream
   }
+
+  const direct = await fetch(
+    `https://nt.learn-topper.workers.dev/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=root`
+  );
+  if (!direct.ok) {
+    throw new Error(`Failed to fetch batch content: HTTP ${direct.status}`);
+  }
+  const dJson = await direct.json();
+  return dJson.data || [];
 }
 
 export async function fetchFolderContent(courseId: string, folderId: string | number): Promise<any[]> {
-  const res = await fetch('/api/folder', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ courseId, folderId: String(folderId) }),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch folder content: HTTP ${res.status}`);
-  }
-  const text = await res.text();
   try {
-    const json = JSON.parse(text);
-    return json.data || [];
+    const res = await fetch('/api/folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseId, folderId: String(folderId) }),
+    });
+    if (res.ok) {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        if (Array.isArray(json.data)) return json.data;
+      } catch {}
+    }
   } catch {
-    throw new Error(`Invalid response from /api/folder: ${text.slice(0, 80)}`);
+    // Fall back to direct upstream
   }
+
+  const target = (!folderId || folderId === '0' || folderId === 0) ? 'root' : String(folderId);
+  const direct = await fetch(
+    `https://nt.learn-topper.workers.dev/all-content?courseId=${encodeURIComponent(String(courseId))}&folderId=${encodeURIComponent(target)}`
+  );
+  if (!direct.ok) {
+    throw new Error(`Failed to fetch folder content: HTTP ${direct.status}`);
+  }
+  const dJson = await direct.json();
+  return dJson.data || [];
 }
 
 export async function fetchVideoDetails(courseId: string, contentId: string | number, vdcId?: string): Promise<any> {
-  const res = await fetch('/api/video-details', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      courseId,
-      contentId: String(contentId),
-      ...(vdcId ? { vdcId: String(vdcId) } : {}),
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch video details: HTTP ${res.status}`);
-  }
-  const text = await res.text();
+  const targetVdc = vdcId || contentId;
+
+  // 1. Try proxy route first
   try {
-    const json = JSON.parse(text);
-    return json.data || null;
+    const res = await fetch('/api/video-details', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        courseId,
+        contentId: String(contentId),
+        ...(vdcId ? { vdcId: String(vdcId) } : {}),
+      }),
+    });
+    if (res.ok) {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        if (json.success && json.data && (json.data.file_url || json.data.stream_url)) {
+          return json.data;
+        }
+      } catch {}
+    }
   } catch {
-    throw new Error(`Invalid response from /api/video-details: ${text.slice(0, 80)}`);
+    // Fallback to direct request
   }
+
+  // 2. Direct fallback to Cloudflare Worker media stream resolver (CORS open)
+  if (targetVdc) {
+    try {
+      const directRes = await fetch(
+        `https://nt.learn-topper.workers.dev/get-url?vdcid=${encodeURIComponent(String(targetVdc))}`
+      );
+      if (directRes.ok) {
+        const directJson = await directRes.json();
+        if (directJson.success && directJson.url) {
+          return {
+            file_url: directJson.url,
+            stream_url: directJson.url,
+            directUrl: directJson.directUrl || directJson.url,
+            vdc_id: directJson.vdcId || targetVdc,
+          };
+        }
+      }
+    } catch {
+      // Ignore fallback error
+    }
+  }
+
+  return null;
 }
 
 export function formatDuration(seconds: number | string | null | undefined): string {

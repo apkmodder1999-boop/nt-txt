@@ -328,13 +328,14 @@ export default function App() {
 
           if (deep && missingItems.length > 0) {
             addLog('info', `Resolving ${missingItems.length} direct stream URLs (.m3u8) & links in browser...`);
-            const BATCH = 35;
+            const BATCH = 25;
             for (let i = 0; i < missingItems.length; i += BATCH) {
               const chunk = missingItems.slice(i, i + BATCH);
               await Promise.all(
                 chunk.map(async (fileItem) => {
                   try {
-                    const vd = await fetchVideoDetails(targetCourseId, fileItem.id);
+                    // Crucial fix: pass fileItem.vdcId so get-url resolves with VideoCrypt ID
+                    const vd = await fetchVideoDetails(targetCourseId, fileItem.id, fileItem.vdcId);
                     if (vd) {
                       const resUrl = vd.file_url || vd.stream_url || '';
                       if (fileItem.type === 'video') {
@@ -361,7 +362,30 @@ export default function App() {
                   }
                 })
               );
+              addLog('info', `Resolved ${Math.min(i + BATCH, missingItems.length)} / ${missingItems.length} streams in browser...`);
             }
+
+            // Sync updated stream URLs into rootFolders tree
+            const fileMap = new Map<string, ExtractedFileItem>();
+            finalData.allFiles.forEach((f) => fileMap.set(f.id, f));
+
+            const syncFolderFiles = (node: ExtractedFolderNode) => {
+              if (node.files && Array.isArray(node.files)) {
+                node.files.forEach((nf) => {
+                  const match = fileMap.get(nf.id);
+                  if (match) {
+                    nf.streamUrl = match.streamUrl;
+                    nf.pdfUrl = match.pdfUrl;
+                    nf.duration = match.duration;
+                    nf.durationSeconds = match.durationSeconds;
+                  }
+                });
+              }
+              if (node.folders && Array.isArray(node.folders)) {
+                node.folders.forEach(syncFolderFiles);
+              }
+            };
+            finalData.rootFolders.forEach(syncFolderFiles);
 
             const regenerated = generateTxtFiles(
               targetCourseId,
@@ -387,9 +411,15 @@ export default function App() {
         setTotalNotes(finalData.stats?.totalNotes || 0);
         setTotalDpps(finalData.stats?.totalDpps || 0);
 
-        // If server returned 0 files, trigger client-side extraction fallback immediately
-        if ((finalData.stats?.totalFiles || 0) === 0) {
-          addLog('warning', `Server stream returned 0 files for ${platform}. Attempting direct browser extraction...`);
+        // If server returned 0 files, or returned video items but 0 valid stream URLs (e.g. edge worker subrequest limit),
+        // trigger full client-side extraction fallback immediately
+        const videoCountInBatch = finalData.allFiles?.filter((f) => f.type === 'video').length || 0;
+        const validStreamsCountInBatch = finalData.allFiles?.filter(
+          (f) => f.type === 'video' && f.streamUrl && f.streamUrl.includes('.m3u8') && isValidStreamOrDocUrl(f.streamUrl)
+        ).length || 0;
+
+        if ((finalData.stats?.totalFiles || 0) === 0 || (videoCountInBatch > 0 && validStreamsCountInBatch === 0)) {
+          addLog('warning', `Server stream returned ${validStreamsCountInBatch}/${videoCountInBatch} stream links. Running full browser crawler fallback...`);
           es.close();
           eventSourceRef.current = null;
           if (platform === 'SW') {
@@ -767,6 +797,7 @@ export default function App() {
       );
 
       const finalResult: ExtractionResult = {
+        platform: 'NT',
         courseId: targetCourseId,
         courseDetails,
         extractedAt: new Date().toISOString(),
