@@ -747,11 +747,11 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
         const allFilesList: any[] = [];
         const filesNeedingDetails: any[] = [];
 
-        async function crawlFolder(
+        const crawlFolder = async (
           folderId: string | number,
           folderTitle: string,
           parentPath: string[]
-        ): Promise<any> {
+        ): Promise<any> => {
           totalFoldersCount++;
           const currentPathArr = [...parentPath, folderTitle];
           const pathStr = currentPathArr.join(' / ');

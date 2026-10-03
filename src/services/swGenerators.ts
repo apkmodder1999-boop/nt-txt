@@ -1,6 +1,17 @@
 // Selection Way format generators for courses and batch schedules
 
-import { formatDuration } from './api';
+function formatDuration(seconds: number | string | null | undefined): string {
+  if (!seconds) return 'N/A';
+  const num = typeof seconds === 'string' ? parseInt(seconds, 10) : seconds;
+  if (isNaN(num) || num <= 0) return 'N/A';
+  const h = Math.floor(num / 3600);
+  const m = Math.floor((num % 3600) / 60);
+  const s = num % 60;
+  if (h > 0) {
+    return `${h}h ${m}m ${s}s`;
+  }
+  return `${m}m ${s}s`;
+}
 
 export interface SWExportOptions {
   includeDescription?: boolean;
