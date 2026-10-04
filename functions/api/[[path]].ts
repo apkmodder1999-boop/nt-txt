@@ -1,4 +1,10 @@
-import type { EventContext } from '@cloudflare/workers-types';
+interface EventContext<Env = any, P = any, D = any> {
+  request: Request;
+  env: Env;
+  params?: P;
+  data?: D;
+  waitUntil: (promise: Promise<any>) => void;
+}
 import {
   generateSWTxt,
   generateSWM3U,
