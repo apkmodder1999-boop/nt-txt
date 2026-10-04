@@ -244,6 +244,39 @@ export async function fetchVideoDetails(courseId: string, contentId: string | nu
   return null;
 }
 
+export async function fetchPdfUrl(courseId: string, contentId: string | number): Promise<string | null> {
+  // 1. Try backend proxy first
+  try {
+    const res = await fetch(`/api/pdf-url?content_id=${encodeURIComponent(String(contentId))}&course_id=${encodeURIComponent(String(courseId))}`);
+    if (res.ok) {
+      const json = await res.json();
+      const resolved = json.data?.file_url || json.data?.pdf_url;
+      if (resolved && isValidStreamOrDocUrl(resolved)) {
+        return resolved;
+      }
+    }
+  } catch {
+    // Fallback to direct request
+  }
+
+  // 2. Direct fallback (CORS is *)
+  try {
+    const directRes = await fetch(
+      `https://nexttoppers.nextmate.site/api/course/pdfurl?content_id=${encodeURIComponent(String(contentId))}&course_id=${encodeURIComponent(String(courseId))}`
+    );
+    if (directRes.ok) {
+      const data = await directRes.json();
+      if (data && data.file_url && isValidStreamOrDocUrl(data.file_url)) {
+        return data.file_url;
+      }
+    }
+  } catch {
+    // Ignore fallback error
+  }
+
+  return null;
+}
+
 export function formatDuration(seconds: number | string | null | undefined): string {
   if (!seconds) return 'N/A';
   const num = typeof seconds === 'string' ? parseInt(seconds, 10) : seconds;

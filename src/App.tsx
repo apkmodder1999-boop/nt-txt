@@ -7,6 +7,7 @@ import {
   fetchBatchContent,
   fetchFolderContent,
   fetchVideoDetails,
+  fetchPdfUrl,
   formatDuration,
   parseDownloadUrls,
   classifyFile,
@@ -334,27 +335,28 @@ export default function App() {
               await Promise.all(
                 chunk.map(async (fileItem) => {
                   try {
-                    // Crucial fix: pass fileItem.vdcId so get-url resolves with VideoCrypt ID
-                    const vd = await fetchVideoDetails(targetCourseId, fileItem.id, fileItem.vdcId);
-                    if (vd) {
-                      const resUrl = vd.file_url || vd.stream_url || '';
-                      if (fileItem.type === 'video') {
+                    if (fileItem.type === 'video') {
+                      // Crucial fix: pass fileItem.vdcId so get-url resolves with VideoCrypt ID
+                      const vd = await fetchVideoDetails(targetCourseId, fileItem.id, fileItem.vdcId);
+                      if (vd) {
+                        const resUrl = vd.file_url || vd.stream_url || '';
                         // Strictly only .m3u8 direct stream URLs, never download links or dynamic links
                         if (resUrl && resUrl.includes('.m3u8') && isValidStreamOrDocUrl(resUrl)) {
                           fileItem.streamUrl = resUrl;
                         }
-                      } else {
-                        if (isValidStreamOrDocUrl(resUrl)) {
-                          fileItem.pdfUrl = resUrl;
-                          fileItem.streamUrl = resUrl;
+                        if (vd.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
+                          const d = typeof vd.duration === 'string' ? parseInt(vd.duration, 10) : vd.duration;
+                          if (!isNaN(d) && d > 0) {
+                            fileItem.durationSeconds = d;
+                            fileItem.duration = formatDuration(d);
+                          }
                         }
                       }
-                      if (vd.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
-                        const d = typeof vd.duration === 'string' ? parseInt(vd.duration, 10) : vd.duration;
-                        if (!isNaN(d) && d > 0) {
-                          fileItem.durationSeconds = d;
-                          fileItem.duration = formatDuration(d);
-                        }
+                    } else if (fileItem.type === 'notes' || fileItem.type === 'dpp' || fileItem.type === 'test') {
+                      const pdfLink = await fetchPdfUrl(targetCourseId, fileItem.id);
+                      if (pdfLink && isValidStreamOrDocUrl(pdfLink)) {
+                        fileItem.pdfUrl = pdfLink;
+                        fileItem.streamUrl = pdfLink;
                       }
                     }
                   } catch {
@@ -742,28 +744,29 @@ export default function App() {
           await Promise.all(
             chunk.map(async (fileItem) => {
               try {
-                const vidDetails = await fetchVideoDetails(targetCourseId, fileItem.id, fileItem.vdcId);
-                if (vidDetails) {
-                  const resUrl = vidDetails.file_url || vidDetails.stream_url || '';
-                  if (fileItem.type === 'video') {
+                if (fileItem.type === 'video') {
+                  const vidDetails = await fetchVideoDetails(targetCourseId, fileItem.id, fileItem.vdcId);
+                  if (vidDetails) {
+                    const resUrl = vidDetails.file_url || vidDetails.stream_url || '';
                     // Strictly only .m3u8 direct stream URLs, never download links or dynamic links
                     if (resUrl && resUrl.includes('.m3u8') && isValidStreamOrDocUrl(resUrl)) {
                       fileItem.streamUrl = resUrl;
                     }
-                  } else {
-                    if (isValidStreamOrDocUrl(resUrl)) {
-                      fileItem.pdfUrl = resUrl;
-                      fileItem.streamUrl = resUrl;
+
+                    if (vidDetails.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
+                      const d = typeof vidDetails.duration === 'string' ? parseInt(vidDetails.duration, 10) : vidDetails.duration;
+                      if (!isNaN(d) && d > 0) {
+                        fileItem.durationSeconds = d;
+                        fileItem.duration = formatDuration(d);
+                        durationSum += d;
+                      }
                     }
                   }
-
-                  if (vidDetails.duration && (!fileItem.durationSeconds || fileItem.durationSeconds === 0)) {
-                    const d = typeof vidDetails.duration === 'string' ? parseInt(vidDetails.duration, 10) : vidDetails.duration;
-                    if (!isNaN(d) && d > 0) {
-                      fileItem.durationSeconds = d;
-                      fileItem.duration = formatDuration(d);
-                      durationSum += d;
-                    }
+                } else if (fileItem.type === 'notes' || fileItem.type === 'dpp' || fileItem.type === 'test') {
+                  const pdfLink = await fetchPdfUrl(targetCourseId, fileItem.id);
+                  if (pdfLink && isValidStreamOrDocUrl(pdfLink)) {
+                    fileItem.pdfUrl = pdfLink;
+                    fileItem.streamUrl = pdfLink;
                   }
                 }
               } catch {

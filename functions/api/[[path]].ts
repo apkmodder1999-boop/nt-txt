@@ -383,6 +383,56 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
     }
   }
 
+  // 5.5. PDF URL Resolver
+  if ((pathname === '/api/pdf-url' || pathname === '/api/pdfurl') && (request.method === 'GET' || request.method === 'POST')) {
+    try {
+      let contentId = url.searchParams.get('content_id') || url.searchParams.get('contentId');
+      let courseId = url.searchParams.get('course_id') || url.searchParams.get('courseId');
+      if (!contentId && request.method === 'POST') {
+        const body: any = await request.json().catch(() => ({}));
+        contentId = body.content_id || body.contentId;
+        courseId = courseId || body.course_id || body.courseId;
+      }
+      if (!contentId || !courseId) {
+        return new Response(JSON.stringify({ error: 'content_id and course_id are required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
+      }
+      const res = await fetch(
+        `https://nexttoppers.nextmate.site/api/course/pdfurl?content_id=${encodeURIComponent(String(contentId))}&course_id=${encodeURIComponent(String(courseId))}`,
+        {
+          method: 'GET',
+          headers: DEFAULT_HEADERS,
+        }
+      );
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: `Upstream error: ${res.statusText}` }), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
+      }
+      const data: any = await res.json();
+      return new Response(JSON.stringify({
+        success: true,
+        data: {
+          file_url: data.file_url || '',
+          pdf_url: data.file_url || '',
+          id: data.id,
+          title: data.title,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message || 'Failed to fetch PDF URL' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    }
+  }
+
   // SW (Selection Way) Endpoints
   const SW_HEADERS = {
     'User-Agent':
@@ -978,17 +1028,35 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
               chunk.map(async ({ fileObj, itemId }) => {
                 remainingSubrequests--;
                 try {
-                  const targetVdc = fileObj.vdcId || itemId;
-                  if (fileObj.type === 'video' && targetVdc) {
-                    const vdRes = await fetch(`${remoteBase}/get-url?vdcid=${encodeURIComponent(String(targetVdc))}`, {
-                      method: 'GET',
-                      headers: DEFAULT_HEADERS,
-                      signal: AbortSignal.timeout(6000),
-                    });
-                    if (vdRes.ok) {
-                      const vdJson: any = await vdRes.json();
-                      if (vdJson.success && vdJson.url && vdJson.url.includes('.m3u8')) {
-                        fileObj.streamUrl = vdJson.url;
+                  if (fileObj.type === 'video') {
+                    const targetVdc = fileObj.vdcId || itemId;
+                    if (targetVdc) {
+                      const vdRes = await fetch(`${remoteBase}/get-url?vdcid=${encodeURIComponent(String(targetVdc))}`, {
+                        method: 'GET',
+                        headers: DEFAULT_HEADERS,
+                        signal: AbortSignal.timeout(6000),
+                      });
+                      if (vdRes.ok) {
+                        const vdJson: any = await vdRes.json();
+                        if (vdJson.success && vdJson.url && vdJson.url.includes('.m3u8')) {
+                          fileObj.streamUrl = vdJson.url;
+                        }
+                      }
+                    }
+                  } else if ((fileObj.type === 'notes' || fileObj.type === 'dpp' || fileObj.type === 'test') && !fileObj.pdfUrl) {
+                    const pRes = await fetch(
+                      `https://nexttoppers.nextmate.site/api/course/pdfurl?content_id=${encodeURIComponent(String(itemId))}&course_id=${encodeURIComponent(String(courseId))}`,
+                      {
+                        method: 'GET',
+                        headers: DEFAULT_HEADERS,
+                        signal: AbortSignal.timeout(6000),
+                      }
+                    );
+                    if (pRes.ok) {
+                      const pJson: any = await pRes.json();
+                      if (pJson && pJson.file_url && isValidStreamOrDocUrl(pJson.file_url)) {
+                        fileObj.pdfUrl = pJson.file_url;
+                        fileObj.streamUrl = pJson.file_url;
                       }
                     }
                   }

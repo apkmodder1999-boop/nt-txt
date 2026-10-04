@@ -170,6 +170,40 @@ app.post('/api/video-details', async (req: Request, res: Response) => {
   }
 });
 
+// 5.5. PDF URL Resolver
+app.all(['/api/pdf-url', '/api/pdfurl'], async (req: Request, res: Response) => {
+  try {
+    const courseId = req.query.course_id || req.query.courseId || req.body?.course_id || req.body?.courseId;
+    const contentId = req.query.content_id || req.query.contentId || req.body?.content_id || req.body?.contentId;
+    if (!contentId || !courseId) {
+      return res.status(400).json({ error: 'content_id and course_id are required' });
+    }
+    const response = await fetch(
+      `https://nexttoppers.nextmate.site/api/course/pdfurl?content_id=${encodeURIComponent(String(contentId))}&course_id=${encodeURIComponent(String(courseId))}`,
+      {
+        method: 'GET',
+        headers: DEFAULT_HEADERS,
+      }
+    );
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
+    }
+    const data = await response.json();
+    res.json({
+      success: true,
+      data: {
+        file_url: data.file_url || '',
+        pdf_url: data.file_url || '',
+        id: data.id,
+        title: data.title,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error fetching pdf-url:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch pdf url' });
+  }
+});
+
 // SW (Selection Way) API Endpoints
 app.get('/api/sw/courses', async (req: Request, res: Response) => {
   try {
@@ -672,9 +706,11 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
             filesInFolder.push(fileEntry);
             allFilesList.push(fileEntry);
 
-            // Only queue video items that actually lack direct .m3u8 stream URLs and have a vdcId
+            // Queue video items lacking direct .m3u8 stream URLs and documents lacking PDF links
             if (deepFileDetails) {
               if (category === 'video' && (!fileEntry.streamUrl || !fileEntry.streamUrl.includes('.m3u8'))) {
+                filesNeedingDetails.push(fileEntry);
+              } else if ((category === 'notes' || category === 'dpp' || category === 'test') && !fileEntry.pdfUrl) {
                 filesNeedingDetails.push(fileEntry);
               }
             }
@@ -750,6 +786,8 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
         if (deepFileDetails) {
           if (category === 'video' && (!fileEntry.streamUrl || !fileEntry.streamUrl.includes('.m3u8'))) {
             filesNeedingDetails.push(fileEntry);
+          } else if ((category === 'notes' || category === 'dpp' || category === 'test') && !fileEntry.pdfUrl) {
+            filesNeedingDetails.push(fileEntry);
           }
         }
       }
@@ -766,10 +804,10 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
       );
       treeNodes.push(...crawledRoots);
 
-      // Step 3: Fast concurrent probe of direct .m3u8 Stream URLs via /get-url
+      // Step 3: Fast concurrent probe of direct stream URLs and document links
       if (deepFileDetails && filesNeedingDetails.length > 0) {
         sendEvent('status', {
-          message: `Resolving direct .m3u8 stream URLs for ${filesNeedingDetails.length} video lectures...`,
+          message: `Resolving stream URLs & document links for ${filesNeedingDetails.length} items...`,
         });
 
         const CONCURRENCY = 40;
@@ -790,6 +828,22 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
                       fileItem.streamUrl = uJson.url;
                     }
                   }
+                } else if ((fileItem.type === 'notes' || fileItem.type === 'dpp' || fileItem.type === 'test') && !fileItem.pdfUrl) {
+                  const pRes = await fetch(
+                    `https://nexttoppers.nextmate.site/api/course/pdfurl?content_id=${encodeURIComponent(fileItem.id)}&course_id=${encodeURIComponent(String(courseId))}`,
+                    {
+                      method: 'GET',
+                      headers: DEFAULT_HEADERS,
+                      signal: AbortSignal.timeout(4000),
+                    }
+                  );
+                  if (pRes.ok) {
+                    const pJson = await pRes.json();
+                    if (pJson && pJson.file_url && isValidStreamOrDocUrl(pJson.file_url)) {
+                      fileItem.pdfUrl = pJson.file_url;
+                      fileItem.streamUrl = pJson.file_url;
+                    }
+                  }
                 }
               } catch {
                 // ignore single item failure
@@ -798,7 +852,7 @@ app.get('/api/extract/stream', async (req: Request, res: Response) => {
           );
 
           sendEvent('progress', {
-            folder: `Resolved stream links: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
+            folder: `Resolved links & documents: ${Math.min(i + CONCURRENCY, filesNeedingDetails.length)} / ${filesNeedingDetails.length}`,
             totalFolders: totalFoldersCount,
             totalFiles: totalFilesCount,
           });
