@@ -1,19 +1,46 @@
 export type PlatformType = 'NT' | 'SW';
 
+export type SWCourseSectionType = 'All' | 'Live' | 'Recorded';
+
 export interface SWCourseItem {
   id: string;
   _id?: string;
   title: string;
+  name?: string;
+  slug?: string;
+  authorName?: string;
+  description?: string | null;
   price?: number;
+  priceSelling?: number;
   discountPrice?: number;
+  discount?: string;
   banner?: string;
   bannerSquare?: string;
+  featured_image?: string;
   validity?: string;
+  validityText?: string | null;
+  classesText?: string | null;
   liveClassesCount?: number;
   recordedClassesCount?: number;
   status?: string;
   mainCategory?: string;
   category?: string;
+  categoryName?: string;
+  categoryShortName?: string;
+  categoryId?: string;
+  categorySlug?: string;
+  categoryImageUrl?: string;
+  isRecorded?: boolean;
+  isCurrentlyLive?: boolean;
+  isNew?: boolean;
+  admissionClosed?: boolean;
+  courseOfferings?: Record<string, string>;
+}
+
+export interface SWCourseSections {
+  All: SWCourseItem[];
+  Live: SWCourseItem[];
+  Recorded: SWCourseItem[];
 }
 
 export interface BatchItem {

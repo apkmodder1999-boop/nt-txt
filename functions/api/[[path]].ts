@@ -440,16 +440,64 @@ export const onRequest = async (context: EventContext<Env, any, any>): Promise<R
     Accept: 'application/json',
   };
 
+  const SW_LISTING_BASE = 'https://backend.opsolve.xyz/api/v1/live-course-lisitng';
+
+  const normalizeSWCourseItem = (item: any) => ({
+    ...item,
+    id: String(item.id || item._id || ''),
+    title: item.name || item.title || 'Untitled Course',
+    banner: item.featured_image || item.banner || '',
+    bannerSquare: item.featured_image || item.bannerSquare || item.banner || '',
+    discountPrice: item.priceSelling ?? item.discountPrice,
+    price: item.price,
+    category: item.categoryName || item.category || '',
+    validity: item.validityText || item.validity || '',
+  });
+
+  const fetchSWListingByType = async (type: 'All' | 'Live' | 'Recorded') => {
+    const response = await fetch(`${SW_LISTING_BASE}?type=${encodeURIComponent(type)}`, {
+      headers: SW_HEADERS,
+    });
+    if (!response.ok) {
+      throw new Error(`SW API error (${type}): HTTP ${response.status}`);
+    }
+    const json: any = await response.json();
+    const list = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+    return list.map(normalizeSWCourseItem);
+  };
+
   if (pathname === '/api/sw/courses' && request.method === 'GET') {
     try {
-      const res = await fetch('https://backend.multistreaming.site/api/courses', {
-        headers: SW_HEADERS,
-      });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
-        status: res.status,
-        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-      });
+      const typeParam = (url.searchParams.get('type') || '').trim();
+      if (typeParam === 'All' || typeParam === 'Live' || typeParam === 'Recorded') {
+        const data = await fetchSWListingByType(typeParam);
+        return new Response(JSON.stringify({ status: 'success', type: typeParam, data }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        });
+      }
+
+      const [allCourses, liveCourses, recordedCourses] = await Promise.all([
+        fetchSWListingByType('All'),
+        fetchSWListingByType('Live'),
+        fetchSWListingByType('Recorded'),
+      ]);
+
+      return new Response(
+        JSON.stringify({
+          status: 'success',
+          sections: {
+            All: allCourses,
+            Live: liveCourses,
+            Recorded: recordedCourses,
+          },
+          data: allCourses,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        }
+      );
     } catch (err: any) {
       return new Response(JSON.stringify({ error: err.message || 'Failed to fetch SW courses' }), {
         status: 500,

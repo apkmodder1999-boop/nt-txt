@@ -13,7 +13,7 @@ import {
   classifyFile,
   generateTxtFiles,
   isValidStreamOrDocUrl,
-  fetchSWCourses,
+  fetchSWCourseSections,
   extractSWBatch,
 } from './services/api';
 import {
@@ -25,6 +25,8 @@ import {
   ExtractedFileItem,
   PlatformType,
   SWCourseItem,
+  SWCourseSections,
+  SWCourseSectionType,
 } from './types';
 import {
   Search,
@@ -63,8 +65,13 @@ export default function App() {
   const [isLoadingBatches, setIsLoadingBatches] = useState<boolean>(false);
   const [batchesError, setBatchesError] = useState<string | null>(null);
 
-  // SW Courses list & filtering
-  const [swCourses, setSwCourses] = useState<SWCourseItem[]>([]);
+  // SW Courses list & filtering (3 sections: All, Live, Recorded)
+  const [swCourseSections, setSwCourseSections] = useState<SWCourseSections>({
+    All: [],
+    Live: [],
+    Recorded: [],
+  });
+  const [selectedSWSection, setSelectedSWSection] = useState<SWCourseSectionType>('All');
   const [isLoadingSWCourses, setIsLoadingSWCourses] = useState<boolean>(false);
   const [swCoursesError, setSwCoursesError] = useState<string | null>(null);
 
@@ -115,16 +122,14 @@ export default function App() {
     loadBatches();
   }, []);
 
-  // Load SW courses catalog on mount
+  // Load SW courses catalog (All, Live, Recorded) on mount
   useEffect(() => {
     async function loadSW() {
       setIsLoadingSWCourses(true);
       setSwCoursesError(null);
       try {
-        const data = await fetchSWCourses();
-        if (Array.isArray(data)) {
-          setSwCourses(data);
-        }
+        const sections = await fetchSWCourseSections();
+        setSwCourseSections(sections);
       } catch (err: any) {
         console.error('Failed to load SW courses:', err);
         setSwCoursesError('Could not load SW courses catalog.');
@@ -140,6 +145,7 @@ export default function App() {
     if (newPlatform === platform) return;
     setPlatform(newPlatform);
     setSelectedSection('all');
+    setSelectedSWSection('All');
     setBatchSearchTerm('');
     setError(null);
     setResult(null);
@@ -149,8 +155,9 @@ export default function App() {
       }
     } else {
       if (!courseId || /^\d{1,4}$/.test(courseId)) {
-        if (swCourses.length > 0) {
-          setCourseId(swCourses[0].id);
+        const defaultList = swCourseSections.All;
+        if (defaultList.length > 0) {
+          setCourseId(defaultList[0].id);
         } else {
           setCourseId('');
         }
@@ -189,17 +196,21 @@ export default function App() {
     });
   }, [allBatches, batchSearchTerm, selectedSection]);
 
-  // Filtered courses for SW
+  // Filtered courses for SW based on active section (All / Live / Recorded)
+  const activeSWCourses = swCourseSections[selectedSWSection] || [];
+
   const filteredSWCourses = useMemo(() => {
-    return swCourses.filter((c) => {
+    return activeSWCourses.filter((c) => {
       const q = batchSearchTerm.trim().toLowerCase();
       if (!q) return true;
       return (
-        (c.title || '').toLowerCase().includes(q) ||
-        (c.id || '').toLowerCase().includes(q)
+        (c.title || c.name || '').toLowerCase().includes(q) ||
+        (c.id || '').toLowerCase().includes(q) ||
+        (c.categoryName || c.category || '').toLowerCase().includes(q) ||
+        (c.authorName || '').toLowerCase().includes(q)
       );
     });
-  }, [swCourses, batchSearchTerm]);
+  }, [activeSWCourses, batchSearchTerm]);
 
   const addLog = (type: CrawlLog['type'], message: string) => {
     const time = new Date().toLocaleTimeString();
@@ -946,7 +957,7 @@ export default function App() {
               placeholder={
                 platform === 'NT'
                   ? 'Enter NT Course ID (e.g. 192)'
-                  : 'Enter SW Course ID (e.g. 6a9c1a854d63c7a67104bba6)'
+                  : 'Enter SW Course ID (e.g. 01a19715-249f-79e0-89c0-091b415fb3d0)'
               }
               value={courseId}
               onChange={(e) => setCourseId(e.target.value)}
@@ -1209,6 +1220,39 @@ export default function App() {
             </>
           )}
 
+          {/* SW Category Tabs (All, Live, Recorded) */}
+          {platform === 'SW' && (
+            <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-1">
+              {(['All', 'Live', 'Recorded'] as SWCourseSectionType[]).map((sec) => {
+                const count = swCourseSections[sec]?.length || 0;
+                const isActive = selectedSWSection === sec;
+                return (
+                  <button
+                    key={sec}
+                    type="button"
+                    onClick={() => setSelectedSWSection(sec)}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'border border-border bg-card text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <span>{sec}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
+                        isActive
+                          ? 'bg-primary-foreground/20 text-primary-foreground'
+                          : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* SW Platform Catalog List */}
           {platform === 'SW' && (
             <>
@@ -1226,16 +1270,20 @@ export default function App() {
               {!isLoadingSWCourses && filteredSWCourses.length > 0 && (
                 <ul className="mt-3 grid gap-2">
                   {filteredSWCourses.map((c) => {
-                    const thumb = c.bannerSquare || c.banner;
+                    const thumb = c.featured_image || c.bannerSquare || c.banner;
+                    const displayTitle = c.title || c.name || 'Untitled Course';
+                    const sellingPrice = c.priceSelling ?? c.discountPrice;
+                    const mrpPrice = c.price;
+                    const categoryLabel = c.categoryName || c.categoryShortName || c.category;
                     return (
                       <li
-                        key={c.id}
+                        key={`${selectedSWSection}-${c.id}`}
                         className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border bg-card p-3 sm:flex transition hover:border-border/80"
                       >
                         {thumb ? (
                           <img
                             src={thumb}
-                            alt={c.title}
+                            alt={displayTitle}
                             loading="lazy"
                             referrerPolicy="no-referrer"
                             className="h-12 w-20 shrink-0 rounded-md object-cover bg-muted"
@@ -1250,15 +1298,46 @@ export default function App() {
                         )}
 
                         <div className="min-w-0 flex-1">
-                          <p className="line-clamp-1 text-sm font-medium text-foreground">{c.title}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="line-clamp-1 text-sm font-medium text-foreground">
+                              {displayTitle}
+                            </p>
+                            <span
+                              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
+                                c.isRecorded
+                                  ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20'
+                                  : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                              }`}
+                            >
+                              {c.isRecorded ? 'Recorded' : 'Live'}
+                            </span>
+                            {c.isCurrentlyLive && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0">
+                                LIVE NOW
+                              </span>
+                            )}
+                            {categoryLabel && (
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                                {categoryLabel}
+                              </span>
+                            )}
+                          </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mt-0.5">
                             <span className="font-mono text-[11px] bg-muted px-1.5 py-0.2 rounded">
                               ID: {c.id.substring(0, 12)}…
                             </span>
-                            {c.validity && <span>• {c.validity}</span>}
-                            {(c.discountPrice || c.price) && (
+                            {c.authorName && <span>• {c.authorName}</span>}
+                            {(c.validityText || c.validity) && (
+                              <span>• {c.validityText || c.validity}</span>
+                            )}
+                            {(sellingPrice !== undefined || mrpPrice !== undefined) && (
                               <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                                • ₹{c.discountPrice || c.price}
+                                • ₹{sellingPrice ?? mrpPrice}
+                                {sellingPrice !== undefined && mrpPrice !== undefined && mrpPrice > sellingPrice && (
+                                  <span className="ml-1 text-[11px] line-through text-muted-foreground font-normal">
+                                    ₹{mrpPrice}
+                                  </span>
+                                )}
                               </span>
                             )}
                           </div>
@@ -1284,7 +1363,7 @@ export default function App() {
 
               {!isLoadingSWCourses && filteredSWCourses.length === 0 && !swCoursesError && (
                 <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                  No SW courses found matching your search.
+                  No SW courses found matching your search in {selectedSWSection}.
                 </div>
               )}
             </>

@@ -204,20 +204,61 @@ app.all(['/api/pdf-url', '/api/pdfurl'], async (req: Request, res: Response) => 
   }
 });
 
+const SW_LISTING_BASE = 'https://backend.opsolve.xyz/api/v1/live-course-lisitng';
+
+function normalizeSWCourseItem(item: any) {
+  return {
+    ...item,
+    id: String(item.id || item._id || ''),
+    title: item.name || item.title || 'Untitled Course',
+    banner: item.featured_image || item.banner || '',
+    bannerSquare: item.featured_image || item.bannerSquare || item.banner || '',
+    discountPrice: item.priceSelling ?? item.discountPrice,
+    price: item.price,
+    category: item.categoryName || item.category || '',
+    validity: item.validityText || item.validity || '',
+  };
+}
+
+async function fetchSWListingByType(type: 'All' | 'Live' | 'Recorded') {
+  const response = await fetch(`${SW_LISTING_BASE}?type=${encodeURIComponent(type)}`, {
+    headers: {
+      'Accept': 'application/json',
+      'User-Agent': DEFAULT_HEADERS['User-Agent'],
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`SW API error (${type}): HTTP ${response.status}`);
+  }
+  const json: any = await response.json();
+  const list = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+  return list.map(normalizeSWCourseItem);
+}
+
 // SW (Selection Way) API Endpoints
 app.get('/api/sw/courses', async (req: Request, res: Response) => {
   try {
-    const response = await fetch('https://backend.multistreaming.site/api/courses', {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': DEFAULT_HEADERS['User-Agent'],
-      },
-    });
-    if (!response.ok) {
-      return res.status(response.status).json({ error: `SW API error: ${response.statusText}` });
+    const typeParam = String(req.query.type || '').trim();
+    if (typeParam === 'All' || typeParam === 'Live' || typeParam === 'Recorded') {
+      const data = await fetchSWListingByType(typeParam);
+      return res.json({ status: 'success', type: typeParam, data });
     }
-    const data = await response.json();
-    res.json(data);
+
+    const [allCourses, liveCourses, recordedCourses] = await Promise.all([
+      fetchSWListingByType('All'),
+      fetchSWListingByType('Live'),
+      fetchSWListingByType('Recorded'),
+    ]);
+
+    res.json({
+      status: 'success',
+      sections: {
+        All: allCourses,
+        Live: liveCourses,
+        Recorded: recordedCourses,
+      },
+      data: allCourses,
+    });
   } catch (error: any) {
     console.error('Error fetching SW courses:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch SW courses' });

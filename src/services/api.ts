@@ -6,6 +6,8 @@ import {
   ExtractionStats,
   ExtractionResult,
   SWCourseItem,
+  SWCourseSections,
+  SWCourseSectionType,
 } from '../types';
 import {
   generateSWTxt,
@@ -14,29 +16,81 @@ import {
   generateSWPowerShell,
 } from './swGenerators';
 
-export const SW_API_COURSES = 'https://backend.multistreaming.site/api/courses';
+export const SW_API_COURSES = (type: SWCourseSectionType = 'All') =>
+  `https://backend.opsolve.xyz/api/v1/live-course-lisitng?type=${encodeURIComponent(type)}`;
 export const SW_API_COURSE_CLASSES = (courseId: string) =>
   `https://backend.multistreaming.site/api/courses/${encodeURIComponent(courseId)}/classes?populate=full`;
 
-export async function fetchSWCourses(): Promise<SWCourseItem[]> {
+function normalizeSWCourseItem(item: any): SWCourseItem {
+  return {
+    ...item,
+    id: String(item.id || item._id || ''),
+    title: item.name || item.title || 'Untitled Course',
+    banner: item.featured_image || item.banner || '',
+    bannerSquare: item.featured_image || item.bannerSquare || item.banner || '',
+    discountPrice: item.priceSelling ?? item.discountPrice,
+    price: item.price,
+    category: item.categoryName || item.category || '',
+    validity: item.validityText || item.validity || '',
+  };
+}
+
+export async function fetchSWCourseSections(): Promise<SWCourseSections> {
   try {
     // Try backend proxy first
     const proxyRes = await fetch('/api/sw/courses');
     if (proxyRes.ok) {
       const json = await proxyRes.json();
-      if (Array.isArray(json.data)) return json.data;
-      if (Array.isArray(json)) return json;
+      if (json.sections && Array.isArray(json.sections.All)) {
+        return {
+          All: json.sections.All.map(normalizeSWCourseItem),
+          Live: (json.sections.Live || []).map(normalizeSWCourseItem),
+          Recorded: (json.sections.Recorded || []).map(normalizeSWCourseItem),
+        };
+      }
+    }
+  } catch {
+    // Fall back to direct requests
+  }
+
+  const fetchType = async (type: SWCourseSectionType): Promise<SWCourseItem[]> => {
+    const res = await fetch(SW_API_COURSES(type));
+    if (!res.ok) {
+      throw new Error(`Failed to fetch SW ${type} courses: HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    const list = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+    return list.map(normalizeSWCourseItem);
+  };
+
+  const [All, Live, Recorded] = await Promise.all([
+    fetchType('All'),
+    fetchType('Live'),
+    fetchType('Recorded'),
+  ]);
+
+  return { All, Live, Recorded };
+}
+
+export async function fetchSWCourses(type: SWCourseSectionType = 'All'): Promise<SWCourseItem[]> {
+  try {
+    const proxyRes = await fetch(`/api/sw/courses?type=${encodeURIComponent(type)}`);
+    if (proxyRes.ok) {
+      const json = await proxyRes.json();
+      if (Array.isArray(json.data)) return json.data.map(normalizeSWCourseItem);
+      if (Array.isArray(json)) return json.map(normalizeSWCourseItem);
     }
   } catch {
     // Fall back to direct request
   }
 
-  const res = await fetch(SW_API_COURSES);
+  const res = await fetch(SW_API_COURSES(type));
   if (!res.ok) {
     throw new Error(`Failed to fetch SW courses: HTTP ${res.status}`);
   }
   const json = await res.json();
-  return json.data || [];
+  const list = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+  return list.map(normalizeSWCourseItem);
 }
 
 export async function fetchSWCourseClasses(courseId: string): Promise<any> {
